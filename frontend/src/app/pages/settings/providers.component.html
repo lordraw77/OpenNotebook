@@ -1,0 +1,306 @@
+@if (busy()) {
+  <mat-progress-bar mode="indeterminate"></mat-progress-bar>
+}
+
+<div class="row">
+  <h2 class="section">Providers</h2>
+  <span class="spacer" style="flex: 1"></span>
+  <button mat-stroked-button (click)="showAdd.set(!showAdd())">
+    <mat-icon>add</mat-icon> Add provider
+  </button>
+</div>
+<p class="muted">
+  No model runs inside OpenNotebook: every model call goes to one of these external providers. Keys
+  are stored encrypted and never shown again.
+</p>
+
+@if (showAdd()) {
+  <mat-card appearance="outlined">
+    <mat-card-content>
+      <form class="form" (ngSubmit)="create()">
+        <mat-form-field appearance="outline">
+          <mat-label>Provider</mat-label>
+          <mat-select [value]="draft.kind" (valueChange)="setDraftKind($event)" name="kind">
+            @for (k of kinds(); track k.kind) {
+              <mat-option [value]="k.kind">{{ k.label }}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+        @if (draftKind(); as k) {
+          <mat-form-field appearance="outline">
+            <mat-label>Name</mat-label>
+            <input
+              matInput
+              name="name"
+              [(ngModel)]="draft.name"
+              pattern="[a-z0-9][a-z0-9_-]*"
+              required
+            />
+            <mat-hint>lowercase, used in MODEL_* settings</mat-hint>
+          </mat-form-field>
+          @if (k.requires_api_key) {
+            <mat-form-field appearance="outline">
+              <mat-label>API key</mat-label>
+              <input
+                matInput
+                type="password"
+                name="api_key"
+                [(ngModel)]="draft.api_key"
+                autocomplete="off"
+                required
+              />
+            </mat-form-field>
+          }
+          @if (k.requires_base_url) {
+            <mat-form-field appearance="outline">
+              <mat-label>Base URL</mat-label>
+              <input
+                matInput
+                name="base_url"
+                [(ngModel)]="draft.base_url"
+                placeholder="http://ollama-host:11434"
+                required
+              />
+            </mat-form-field>
+          }
+          @for (opt of k.option_keys; track opt) {
+            <mat-form-field appearance="outline">
+              <mat-label>{{ opt }}</mat-label>
+              <input matInput [name]="opt" [(ngModel)]="draft.options[opt]" required />
+            </mat-form-field>
+          }
+          <mat-form-field appearance="outline">
+            <mat-label>Timeout (s)</mat-label>
+            <input
+              matInput
+              type="number"
+              min="5"
+              max="3600"
+              name="timeout"
+              [(ngModel)]="draft.timeout_s"
+            />
+          </mat-form-field>
+          <button mat-flat-button type="submit">Add and sync models</button>
+        }
+      </form>
+    </mat-card-content>
+  </mat-card>
+}
+
+<div class="table-wrap">
+  <table mat-table [dataSource]="providers()">
+    <ng-container matColumnDef="name">
+      <th mat-header-cell *matHeaderCellDef>Name</th>
+      <td mat-cell *matCellDef="let p">
+        <strong>{{ p.name }}</strong>
+      </td>
+    </ng-container>
+    <ng-container matColumnDef="kind">
+      <th mat-header-cell *matHeaderCellDef>Provider</th>
+      <td mat-cell *matCellDef="let p">{{ p.label }}</td>
+    </ng-container>
+    <ng-container matColumnDef="key">
+      <th mat-header-cell *matHeaderCellDef>Key</th>
+      <td mat-cell *matCellDef="let p">{{ p.api_key_hint ?? (p.base_url ? p.base_url : '—') }}</td>
+    </ng-container>
+    <ng-container matColumnDef="models">
+      <th mat-header-cell *matHeaderCellDef>Models</th>
+      <td mat-cell *matCellDef="let p">
+        {{ p.enabled_model_count }} enabled / {{ p.model_count }}
+      </td>
+    </ng-container>
+    <ng-container matColumnDef="sync">
+      <th mat-header-cell *matHeaderCellDef>Last sync</th>
+      <td mat-cell *matCellDef="let p">
+        @if (p.last_error) {
+          <span class="error-text" [matTooltip]="p.last_error">error</span>
+        } @else {
+          {{ p.last_sync_at ? (p.last_sync_at | date: 'short') : 'never' }}
+        }
+      </td>
+    </ng-container>
+    <ng-container matColumnDef="enabled">
+      <th mat-header-cell *matHeaderCellDef>Enabled</th>
+      <td mat-cell *matCellDef="let p">
+        <mat-slide-toggle
+          [checked]="p.enabled"
+          (click)="$event.stopPropagation()"
+          (change)="setEnabled(p, $event.checked)"
+          [attr.aria-label]="'Enable ' + p.name"
+        ></mat-slide-toggle>
+      </td>
+    </ng-container>
+    <ng-container matColumnDef="actions">
+      <th mat-header-cell *matHeaderCellDef></th>
+      <td mat-cell *matCellDef="let p">
+        <button
+          mat-icon-button
+          matTooltip="Sync model catalog"
+          (click)="$event.stopPropagation(); sync(p)"
+          aria-label="Sync"
+        >
+          <mat-icon>sync</mat-icon>
+        </button>
+        <button
+          mat-icon-button
+          matTooltip="Remove"
+          (click)="$event.stopPropagation(); remove(p)"
+          aria-label="Remove"
+        >
+          <mat-icon>delete</mat-icon>
+        </button>
+      </td>
+    </ng-container>
+    <tr mat-header-row *matHeaderRowDef="providerColumns"></tr>
+    <tr
+      mat-row
+      *matRowDef="let p; columns: providerColumns"
+      class="clickable"
+      [class.selected]="p.id === selectedId()"
+      (click)="select(p)"
+    ></tr>
+    <tr class="mat-row" *matNoDataRow>
+      <td class="mat-cell muted" [attr.colspan]="providerColumns.length">
+        No providers yet. Keys present in .env are imported at first start.
+      </td>
+    </tr>
+  </table>
+</div>
+
+@if (selected(); as p) {
+  <h2 class="section">{{ p.label }} · {{ p.name }}</h2>
+
+  <div class="form">
+    @if (p.kind !== 'ollama') {
+      <mat-form-field appearance="outline">
+        <mat-label>Replace API key</mat-label>
+        <input matInput type="password" [(ngModel)]="newKey" autocomplete="off" />
+      </mat-form-field>
+      <button mat-stroked-button [disabled]="!newKey" (click)="saveKey(p)">Save key</button>
+    }
+  </div>
+
+  <div class="row filters">
+    <mat-form-field appearance="outline" subscriptSizing="dynamic" class="grow">
+      <mat-label>Search models</mat-label>
+      <input matInput [(ngModel)]="query" (ngModelChange)="loadModels()" />
+    </mat-form-field>
+    <mat-form-field appearance="outline" subscriptSizing="dynamic">
+      <mat-label>Capability</mat-label>
+      <mat-select [(ngModel)]="capability" (ngModelChange)="loadModels()">
+        <mat-option [value]="null">Any</mat-option>
+        @for (c of allCaps; track c) {
+          <mat-option [value]="c">{{ c }}</mat-option>
+        }
+      </mat-select>
+    </mat-form-field>
+    <mat-checkbox [(ngModel)]="enabledOnly" (ngModelChange)="loadModels()"
+      >Enabled only</mat-checkbox
+    >
+  </div>
+
+  <div class="table-wrap">
+    <table mat-table [dataSource]="models()">
+      <ng-container matColumnDef="enabled">
+        <th mat-header-cell *matHeaderCellDef>Use</th>
+        <td mat-cell *matCellDef="let m">
+          <mat-slide-toggle
+            [checked]="m.enabled"
+            (change)="toggleModel(m, $event.checked)"
+            [attr.aria-label]="'Enable ' + m.model"
+          ></mat-slide-toggle>
+        </td>
+      </ng-container>
+      <ng-container matColumnDef="model">
+        <th mat-header-cell *matHeaderCellDef>Model</th>
+        <td mat-cell *matCellDef="let m" class="model-id">
+          {{ m.model }}
+          @if (!m.available) {
+            <span class="cap" matTooltip="Not listed by the provider anymore, or retired"
+              >unavailable</span
+            >
+          }
+        </td>
+      </ng-container>
+      <ng-container matColumnDef="capabilities">
+        <th mat-header-cell *matHeaderCellDef>Capabilities</th>
+        <td mat-cell *matCellDef="let m">
+          <div class="chip-list">
+            @for (c of allCaps; track c) {
+              <button
+                type="button"
+                class="cap"
+                [class.off]="!m.capabilities.includes(c)"
+                (click)="toggleCap(m, c)"
+                [matTooltip]="
+                  m.capabilities_source === 'manual'
+                    ? 'Set manually'
+                    : 'Detected (' + m.capabilities_source + '); click to override'
+                "
+              >
+                {{ c }}
+              </button>
+            }
+          </div>
+        </td>
+      </ng-container>
+      <ng-container matColumnDef="context">
+        <th mat-header-cell *matHeaderCellDef>Context / dim</th>
+        <td mat-cell *matCellDef="let m">
+          {{ m.embedding_dim ? 'dim ' + m.embedding_dim : (m.context_window ?? '—') }}
+        </td>
+      </ng-container>
+      <ng-container matColumnDef="test">
+        <th mat-header-cell *matHeaderCellDef>Test</th>
+        <td mat-cell *matCellDef="let m">
+          @let r = testResult(m);
+          @if (r === 'running') {
+            <span class="muted">testing…</span>
+          } @else {
+            <button mat-button (click)="test(m)">Test</button>
+            @if (isResult(r)) {
+              @if (r.ok) {
+                <span class="test-ok"
+                  >ok · {{ r.latency_ms }} ms{{
+                    r.embedding_dim ? ' · dim ' + r.embedding_dim : ''
+                  }}</span
+                >
+              } @else {
+                <span class="error-text" [matTooltip]="r.detail ?? ''">{{ r.error }}</span>
+              }
+            }
+          }
+        </td>
+      </ng-container>
+      <tr mat-header-row *matHeaderRowDef="modelColumns"></tr>
+      <tr mat-row *matRowDef="let m; columns: modelColumns"></tr>
+      <tr class="mat-row" *matNoDataRow>
+        <td class="mat-cell muted" [attr.colspan]="modelColumns.length">
+          No models. Use Sync or add one manually below.
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="form" style="margin-top: 12px">
+    <mat-form-field appearance="outline">
+      <mat-label>Add model manually</mat-label>
+      <input matInput [(ngModel)]="manualModel" placeholder="e.g. BAAI/bge-m3" />
+    </mat-form-field>
+    <mat-form-field appearance="outline">
+      <mat-label>Capabilities</mat-label>
+      <mat-select [(ngModel)]="manualCaps" multiple>
+        @for (c of allCaps; track c) {
+          <mat-option [value]="c">{{ c }}</mat-option>
+        }
+      </mat-select>
+    </mat-form-field>
+    <button
+      mat-stroked-button
+      [disabled]="!manualModel.trim() || manualCaps.length === 0"
+      (click)="addManual()"
+    >
+      Add
+    </button>
+  </div>
+}

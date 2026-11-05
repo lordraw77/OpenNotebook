@@ -1,0 +1,218 @@
+# OpenNotebook — single Compose file with optional profiles.
+#
+#   make up                                   # core stack (profiles from COMPOSE_PROFILES in .env)
+#   docker compose --env-file .env -f deploy/compose/docker-compose.yml up -d
+#   ... --profile observability up -d         # + Prometheus and Grafana
+#   ... --profile auth up -d                  # + Keycloak (OIDC)
+#
+# Run from the repository root; `--env-file .env` provides the values interpolated below.
+# No service in any profile runs a model: every model call goes to an external provider.
+
+name: opennotebook
+
+x-app: &app
+  image: ${REGISTRY:-opennotebook}/api:${VERSION:-dev}
+  env_file:
+    - path: ${OPENNOTEBOOK_ENV_FILE:-../../.env}
+      required: true
+  environment: &app-env
+    POSTGRES_HOST: postgres
+    QDRANT_URL: http://qdrant:6333
+    REDIS_URL: redis://redis:6379/0
+    S3_ENDPOINT: http://seaweedfs:8333
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp
+  security_opt:
+    - no-new-privileges:true
+  cap_drop: [ALL]
+  networks: [internal, egress]
+
+services:
+  web:
+    image: ${REGISTRY:-opennotebook}/web:${VERSION:-dev}
+    build:
+      context: ../../frontend
+    ports:
+      - "${WEB_BIND:-0.0.0.0}:${WEB_PORT:-8080}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    networks: [internal, public]
+
+  api:
+    <<: *app
+    build:
+      context: ../../backend
+      target: api
+    command: ["api"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+
+  worker:
+    <<: *app
+    image: ${REGISTRY:-opennotebook}/worker:${VERSION:-dev}
+    build:
+      context: ../../backend
+      target: worker
+    command: ["worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  migrate:
+    <<: *app
+    # Applies migrations, then idempotent first-start initialization: admin user, storage bucket,
+    # providers from .env keys, model catalog sync and MODEL_* defaults.
+    entrypoint: ["sh", "-c"]
+    command: ["opennotebook migrate && opennotebook bootstrap"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:18.6-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-opennotebook}
+      POSTGRES_USER: ${POSTGRES_USER:-opennotebook}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run make secrets}
+    volumes:
+      - pg-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    shm_size: 256m
+    networks: [internal]
+
+  qdrant:
+    image: qdrant/qdrant:v1.20.0
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:?run make secrets}
+      QDRANT__TELEMETRY_DISABLED: "true"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    networks: [internal]
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.52
+    environment:
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:?run make secrets}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:?run make secrets}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        cat > /tmp/s3.json <<EOF
+        {"identities":[{"name":"opennotebook","credentials":[{"accessKey":"$$S3_ACCESS_KEY","secretKey":"$$S3_SECRET_KEY"}],"actions":["Admin","Read","Write","List","Tagging"]}]}
+        EOF
+        exec weed server -dir=/data -ip=seaweedfs -ip.bind=0.0.0.0 -volume.max=0 -master.volumeSizeLimitMB=1024 -s3 -s3.config=/tmp/s3.json
+    volumes:
+      - blob-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9333/cluster/status && wget -q -O /dev/null http://127.0.0.1:8333/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+    networks: [internal]
+
+  redis:
+    image: redis:8.8.4-alpine
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?run make secrets}
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --appendonly yes --save ''"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    networks: [internal]
+
+  # --- profile: auth ---------------------------------------------------------------------------
+  keycloak:
+    profiles: [auth]
+    image: quay.io/keycloak/keycloak:26.8.1
+    command: ["start-dev", "--http-port=8081"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-}
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "${KEYCLOAK_BIND:-127.0.0.1}:${KEYCLOAK_PORT:-8081}:8081"
+    volumes:
+      - keycloak-data:/opt/keycloak/data
+    restart: unless-stopped
+    networks: [internal, public]
+
+  # --- profile: observability -------------------------------------------------------------------
+  prometheus:
+    profiles: [observability]
+    image: prom/prometheus:v3.15.1
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "${PROMETHEUS_BIND:-127.0.0.1}:${PROMETHEUS_PORT:-9090}:9090"
+    restart: unless-stopped
+    networks: [internal, public]
+
+  grafana:
+    profiles: [observability]
+    image: grafana/grafana:13.2.5
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ./observability/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "${GRAFANA_BIND:-127.0.0.1}:${GRAFANA_PORT:-3000}:3000"
+    depends_on: [prometheus]
+    restart: unless-stopped
+    networks: [internal, public]
+
+networks:
+  internal:
+    internal: true   # no internet access for databases and storage
+  egress: {}         # api/worker reach external model providers
+  public: {}         # published ports
+
+volumes:
+  pg-data:
+  qdrant-data:
+  blob-data:
+  redis-data:
+  keycloak-data:
+  prometheus-data:
+  grafana-data:

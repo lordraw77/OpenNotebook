@@ -1,0 +1,202 @@
+<div class="workbench" [class.left-closed]="!leftOpen()" [class.right-closed]="!rightOpen()">
+  <!-- Left column: hierarchy and sources -->
+  <aside class="col left" aria-label="Sources">
+    <header class="col-head">
+      <h2>Sources</h2>
+      <span class="spacer"></span>
+      <button
+        mat-icon-button
+        matTooltip="New project"
+        aria-label="New project"
+        (click)="createProject()"
+      >
+        <mat-icon>create_new_folder</mat-icon>
+      </button>
+      <button
+        mat-icon-button
+        matTooltip="Collapse"
+        aria-label="Collapse sources"
+        (click)="leftOpen.set(false)"
+      >
+        <mat-icon>left_panel_close</mat-icon>
+      </button>
+    </header>
+
+    @if (tree().length === 0) {
+      <p class="muted empty">No projects yet. Create one to start organizing sources.</p>
+    }
+
+    <mat-tree
+      [dataSource]="tree()"
+      [childrenAccessor]="childrenAccessor"
+      [trackBy]="trackBy"
+      [expansionKey]="expansionKey"
+      class="tree"
+    >
+      <mat-tree-node
+        *matTreeNodeDef="let item"
+        class="tnode"
+        [class.selected]="item.node.id === selectedId()"
+        [class.inactive]="!item.node.active"
+      >
+        <span class="toggle-space"></span>
+        <ng-container *ngTemplateOutlet="row; context: { $implicit: item.node }"></ng-container>
+      </mat-tree-node>
+      <mat-tree-node
+        *matTreeNodeDef="let item; when: hasChild"
+        [isExpandable]="true"
+        class="tnode"
+        [class.selected]="item.node.id === selectedId()"
+        [class.inactive]="!item.node.active"
+      >
+        <button
+          mat-icon-button
+          matTreeNodeToggle
+          class="toggle"
+          [attr.aria-label]="'Toggle ' + item.node.name"
+        >
+          <mat-icon>chevron_right</mat-icon>
+        </button>
+        <ng-container *ngTemplateOutlet="row; context: { $implicit: item.node }"></ng-container>
+      </mat-tree-node>
+    </mat-tree>
+
+    <ng-template #row let-node>
+      <button
+        class="label"
+        type="button"
+        (click)="$event.stopPropagation(); select(node)"
+        [disabled]="node.role === null"
+        [attr.aria-current]="node.id === selectedId()"
+      >
+        <mat-icon class="kind">{{ icons[node.kind] }}</mat-icon>
+        <span class="name">{{ node.name }}</span>
+      </button>
+      @if (node.role !== null) {
+        <mat-slide-toggle
+          [checked]="node.active"
+          [disabled]="!hasRole(node, 'editor')"
+          (click)="$event.stopPropagation()"
+          (change)="toggleActive(node, $event.checked)"
+          [matTooltip]="node.active ? 'Included in search' : 'Excluded from search'"
+          [attr.aria-label]="'Include ' + node.name + ' in search'"
+        ></mat-slide-toggle>
+        <button
+          mat-icon-button
+          [matMenuTriggerFor]="nodeMenu"
+          [matMenuTriggerData]="{ node }"
+          (click)="$event.stopPropagation()"
+          aria-label="Node actions"
+        >
+          <mat-icon>more_vert</mat-icon>
+        </button>
+      }
+    </ng-template>
+
+    <mat-menu #nodeMenu="matMenu">
+      <ng-template matMenuContent let-node="node">
+        @if (hasRole(node, 'editor')) {
+          @for (kind of childKinds[node.kind]; track kind) {
+            <button mat-menu-item (click)="createChild(node, kind)">
+              <mat-icon>{{ icons[kind] }}</mat-icon> New {{ kind }}
+            </button>
+          }
+          <button mat-menu-item (click)="rename(node)"><mat-icon>edit</mat-icon> Rename</button>
+        }
+        @if (hasRole(node, 'owner')) {
+          <button mat-menu-item (click)="share(node)"><mat-icon>share</mat-icon> Share…</button>
+          <mat-divider></mat-divider>
+          <button mat-menu-item (click)="remove(node)"><mat-icon>delete</mat-icon> Delete</button>
+        }
+      </ng-template>
+    </mat-menu>
+  </aside>
+
+  <!-- Center column: grounded chat -->
+  <section class="col center" aria-label="Chat">
+    <header class="col-head">
+      @if (!leftOpen()) {
+        <button mat-icon-button aria-label="Show sources" (click)="leftOpen.set(true)">
+          <mat-icon>left_panel_open</mat-icon>
+        </button>
+      }
+      <nav class="crumbs" aria-label="Search scope">
+        @for (n of path(); track n.id; let last = $last) {
+          <span [class.current]="last">{{ n.name }}</span>
+          @if (!last) {
+            <mat-icon class="sep">chevron_right</mat-icon>
+          }
+        } @empty {
+          <span class="muted">Select a project, workspace or notebook to set the search scope</span>
+        }
+      </nav>
+      <span class="spacer"></span>
+      <mat-form-field appearance="outline" class="model-select" subscriptSizing="dynamic">
+        <mat-label>Chat model</mat-label>
+        <mat-select
+          [value]="chatModelId()"
+          (valueChange)="selectModel($event)"
+          [disabled]="chatModels().length === 0"
+        >
+          @for (m of chatModels(); track m.id; let i = $index) {
+            <mat-option [value]="m.id">
+              {{ m.provider_name }} / {{ m.model }}
+              @if (i === 0) {
+                <span class="muted">· default</span>
+              }
+            </mat-option>
+          }
+        </mat-select>
+        @if (chatModels().length === 0) {
+          <mat-hint>{{ modelError() ?? 'No chat model configured (Settings → Models)' }}</mat-hint>
+        }
+      </mat-form-field>
+      @if (!rightOpen()) {
+        <button mat-icon-button aria-label="Show notes" (click)="rightOpen.set(true)">
+          <mat-icon>right_panel_open</mat-icon>
+        </button>
+      }
+    </header>
+
+    <div class="messages">
+      <div class="placeholder">
+        <mat-icon>forum</mat-icon>
+        <p>Grounded chat with clickable citations arrives in milestone M2.</p>
+        <p class="muted">Answers will use only the active sources inside the selected scope.</p>
+      </div>
+    </div>
+
+    <form class="composer" (ngSubmit)="$event.preventDefault()">
+      <mat-form-field appearance="outline" class="grow" subscriptSizing="dynamic">
+        <mat-label>Ask about the sources in scope</mat-label>
+        <textarea
+          matInput
+          name="question"
+          [(ngModel)]="question"
+          rows="2"
+          [disabled]="true"
+        ></textarea>
+      </mat-form-field>
+      <button mat-flat-button type="submit" [disabled]="true">Send</button>
+    </form>
+  </section>
+
+  <!-- Right column: notes -->
+  <aside class="col right" aria-label="Notes">
+    <header class="col-head">
+      <h2>Notes</h2>
+      <span class="spacer"></span>
+      <button
+        mat-icon-button
+        matTooltip="Collapse"
+        aria-label="Collapse notes"
+        (click)="rightOpen.set(false)"
+      >
+        <mat-icon>right_panel_close</mat-icon>
+      </button>
+    </header>
+    <p class="muted empty">
+      Notes saved from chat or written manually will appear here (milestone M1–M2).
+    </p>
+  </aside>
+</div>
