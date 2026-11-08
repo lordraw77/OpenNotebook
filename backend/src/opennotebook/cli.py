@@ -5,6 +5,7 @@ Commands:
   worker     run a Celery worker (pass extra Celery args after --)
   migrate    apply database migrations
   bootstrap  create the first admin, ensure the storage bucket, import providers/model defaults from env
+  reset-admin  create the administrator or reset its password (BOOTSTRAP_ADMIN_* or --email/--password)
   doctor     check connectivity to every internal service and configured provider
 """
 
@@ -14,6 +15,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -132,6 +134,51 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+async def reset_admin(email: str, password: str) -> str:
+    """Create the administrator, or reset its password, admin role and active state; revoke its sessions."""
+    from sqlalchemy import delete, select
+
+    from opennotebook.db import get_sessionmaker
+    from opennotebook.models import AuditLog, RefreshToken, User
+    from opennotebook.security import hash_password
+
+    email = email.strip().lower()
+    async with get_sessionmaker()() as session:
+        user = await session.scalar(select(User).where(User.email == email))
+        action = "reset"
+        if user is None:
+            user = User(email=email, display_name="Administrator", password_hash="", is_admin=True)
+            session.add(user)
+            action = "created"
+        user.password_hash = hash_password(password)
+        user.is_admin = True
+        user.is_active = True
+        await session.flush()
+        await session.execute(delete(RefreshToken).where(RefreshToken.user_id == user.id))
+        session.add(
+            AuditLog(actor_id=None, action=f"admin.{action}", target_type="user", target_id=str(user.id))
+        )
+        await session.commit()
+    return action
+
+
+def cmd_reset_admin(args: argparse.Namespace) -> int:
+    from opennotebook.config import get_settings
+
+    settings = get_settings()
+    email = args.email or settings.bootstrap_admin_email
+    password = args.password or os.environ.get("RESET_ADMIN_PASSWORD") or settings.bootstrap_admin_password
+    if not email or not password:
+        print("Set --email/--password or BOOTSTRAP_ADMIN_EMAIL/BOOTSTRAP_ADMIN_PASSWORD", file=sys.stderr)
+        return 2
+    if len(password) < 12:
+        print("The password must be at least 12 characters", file=sys.stderr)
+        return 2
+    action = asyncio.run(reset_admin(email, password))
+    print(f"administrator {action}: {email.lower()} (existing sessions revoked)")
+    return 0
+
+
 def cmd_api(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -177,6 +224,15 @@ def main(argv: list[str] | None = None) -> int:
     p_boot.add_argument("--no-sync", action="store_true", help="do not sync provider model catalogs")
     p_boot.set_defaults(func=cmd_bootstrap)
     sub.add_parser("doctor", help="connectivity checks").set_defaults(func=cmd_doctor)
+    p_reset = sub.add_parser(
+        "reset-admin",
+        help="create the administrator or reset its password (defaults: BOOTSTRAP_ADMIN_EMAIL/PASSWORD)",
+    )
+    p_reset.add_argument("--email")
+    p_reset.add_argument(
+        "--password", help="prefer RESET_ADMIN_PASSWORD or BOOTSTRAP_ADMIN_PASSWORD (not shell history)"
+    )
+    p_reset.set_defaults(func=cmd_reset_admin)
 
     args = parser.parse_args(argv)
     return int(args.func(args) or 0)

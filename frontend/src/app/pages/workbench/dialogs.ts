@@ -9,7 +9,8 @@ import { MatInputModule } from '@angular/material/input';
 import { MatListModule } from '@angular/material/list';
 import { MatSelectModule } from '@angular/material/select';
 
-import { Grant, GrantRole, TreeNodeDto, User } from '../../core/api.models';
+import { AdminApi } from '../../core/admin.api';
+import { Grant, GrantRole, TreeNodeDto } from '../../core/api.models';
 import { ApiService, errorMessage } from '../../core/api.service';
 
 export interface NameDialogData {
@@ -55,7 +56,12 @@ export class NameDialogComponent {
   }
 }
 
-type DirectoryUser = Pick<User, 'id' | 'email' | 'display_name'>;
+interface Candidate {
+  type: 'user' | 'group';
+  id: string;
+  label: string;
+  detail: string;
+}
 
 @Component({
   selector: 'app-share-dialog',
@@ -94,7 +100,7 @@ type DirectoryUser = Pick<User, 'id' | 'email' | 'display_name'>;
       </mat-list>
       <div class="row add">
         <mat-form-field appearance="outline" class="grow">
-          <mat-label>User</mat-label>
+          <mat-label>Person or group</mat-label>
           <input
             matInput
             [(ngModel)]="query"
@@ -106,8 +112,11 @@ type DirectoryUser = Pick<User, 'id' | 'email' | 'display_name'>;
             [displayWith]="display"
             (optionSelected)="picked = $event.option.value"
           >
-            @for (u of candidates(); track u.id) {
-              <mat-option [value]="u">{{ u.display_name }} · {{ u.email }}</mat-option>
+            @for (c of candidates(); track c.type + c.id) {
+              <mat-option [value]="c">
+                <mat-icon>{{ c.type === 'group' ? 'group' : 'person' }}</mat-icon>
+                {{ c.label }} <span class="muted">· {{ c.detail }}</span>
+              </mat-option>
             }
           </mat-autocomplete>
         </mat-form-field>
@@ -134,28 +143,50 @@ type DirectoryUser = Pick<User, 'id' | 'email' | 'display_name'>;
 export class ShareDialogComponent {
   protected readonly node = inject<TreeNodeDto>(MAT_DIALOG_DATA);
   private readonly api = inject(ApiService);
+  private readonly admin = inject(AdminApi);
 
   readonly grants = signal<Grant[]>([]);
-  readonly candidates = signal<DirectoryUser[]>([]);
+  readonly candidates = signal<Candidate[]>([]);
   readonly error = signal<string | null>(null);
-  query: string | DirectoryUser = '';
-  picked: DirectoryUser | null = null;
+  query: string | Candidate = '';
+  picked: Candidate | null = null;
   role: GrantRole = 'viewer';
 
   constructor() {
     void this.load();
   }
 
-  display = (u: DirectoryUser | string | null) => (typeof u === 'string' ? u : (u?.email ?? ''));
+  display = (c: Candidate | string | null) => (typeof c === 'string' ? c : (c?.label ?? ''));
 
   async load(): Promise<void> {
     this.grants.set(await this.api.grants(this.node.id));
   }
 
-  async search(q: string | DirectoryUser): Promise<void> {
+  async search(q: string | Candidate): Promise<void> {
     if (typeof q !== 'string') return;
     this.picked = null;
-    this.candidates.set(q.length >= 1 ? await this.api.userDirectory(q) : []);
+    if (!q.length) {
+      this.candidates.set([]);
+      return;
+    }
+    const [users, groups] = await Promise.all([
+      this.api.userDirectory(q),
+      this.admin.groupDirectory(q).catch(() => []),
+    ]);
+    this.candidates.set([
+      ...groups.map((g) => ({
+        type: 'group' as const,
+        id: g.id,
+        label: g.name,
+        detail: g.source === 'oidc' ? 'group (single sign-on)' : 'group',
+      })),
+      ...users.map((u) => ({
+        type: 'user' as const,
+        id: u.id,
+        label: u.display_name,
+        detail: u.email,
+      })),
+    ]);
   }
 
   async add(): Promise<void> {
@@ -163,7 +194,7 @@ export class ShareDialogComponent {
     this.error.set(null);
     try {
       await this.api.putGrant(this.node.id, {
-        principal_type: 'user',
+        principal_type: this.picked.type,
         principal_id: this.picked.id,
         role: this.role,
       });

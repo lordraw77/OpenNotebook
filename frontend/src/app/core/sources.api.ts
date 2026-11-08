@@ -155,6 +155,8 @@ export interface IngestionStatus {
     sources: number;
     chunks: number;
     stale_sources: number;
+    serving_model: string | null;
+    switch_pending: boolean;
   }[];
   recent_jobs: {
     source_id: string;

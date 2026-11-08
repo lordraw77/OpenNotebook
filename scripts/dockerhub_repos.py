@@ -64,7 +64,7 @@ def overview(key: str, title: str, version: str) -> str:
     text = text.replace("{{TITLE}}", title)
     text = text.replace("{{ROLE}}", (DOCS / f"{key}.md").read_text().strip())
     text = text.replace("{{IMAGE_DETAILS}}", (DOCS / f"{key}-details.md").read_text().strip())
-    return text.replace("`0.4.0`", f"`{version}`") if version != "0.4.0" else text
+    return text
 
 
 def main() -> None:

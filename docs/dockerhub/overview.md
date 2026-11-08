@@ -38,7 +38,11 @@ project. A working instance needs one chat model and one embedding model (Gemini
 - **Knowledge graph and wiki**: entities and relations from documents (LLM) and code (symbols, imports, calls —
   no model); wiki pages written only from the passages the reader may see; graph view; graph-expanded chat context.
 - **Summaries and suggested questions** for every document.
-- **Multi-user**: projects, workspaces and notebooks with inherited viewer/editor/owner roles, sharing, audit log.
+- **Deep research mode**: plans sub-questions, searches each one in scope and writes a structured, cited report.
+- **Multi-user**: projects, workspaces and notebooks with inherited viewer/editor/owner roles shared with users or
+  groups; single sign-on (OpenID Connect, e.g. Keycloak) with group sync; audit log.
+- **Governance**: per-project provider policy (e.g. "LAN only"); changing the embedding model re-indexes with no
+  search downtime (atomic index switch).
 - Light and dark theme.
 
 ## Quick start
@@ -69,10 +73,11 @@ Redis. Optional profiles: `observability` (Prometheus + Grafana) and `auth` (Key
 
 | Tag | Content |
 |---|---|
-| `0.4.0` | Milestones M0–M4: foundations, ingestion, grounded chat, extended ingestion, knowledge graph and wiki |
+| `0.5.0` | M0–M5: adds groups, single sign-on (OIDC), provider policy per project, zero-downtime embedding change, deep research mode |
+| `0.4.0` | M0–M4: foundations, ingestion, grounded chat, extended ingestion, knowledge graph and wiki |
 | `latest` | The most recent release |
 
-Pin an exact version in production (`VERSION=0.4.0` in `.env`). The three images of a deployment must have the
+Pin an exact version in production (`VERSION=0.5.0` in `.env`). The three images of a deployment must have the
 same version. Images are `linux/amd64`.
 
 {{IMAGE_DETAILS}}

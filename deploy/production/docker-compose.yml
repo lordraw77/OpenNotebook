@@ -3,7 +3,7 @@
 # Put this file and a `.env` in the same directory, then:
 #   docker compose up -d                                   # core stack
 #   docker compose --profile observability up -d           # + Prometheus and Grafana
-#   docker compose --profile auth up -d                    # + Keycloak (OIDC, integration in M5)
+#   docker compose --profile auth up -d                    # + Keycloak (OIDC single sign-on)
 # or set COMPOSE_PROFILES=auth,observability in .env.
 #
 # Images: ${REGISTRY}/opennotebook-{web,api,worker}:${VERSION} (Docker Hub: lordraw/opennotebook-*).
@@ -25,7 +25,7 @@ x-hardening: &hardening
   cap_drop: [ALL]
 
 x-app: &app
-  image: ${REGISTRY:-lordraw}/opennotebook-api:${VERSION:-0.4.0}
+  image: ${REGISTRY:-lordraw}/opennotebook-api:${VERSION:-0.5.0}
   pull_policy: missing
   env_file:
     - path: .env
@@ -44,7 +44,7 @@ x-app: &app
 
 services:
   web:
-    image: ${REGISTRY:-lordraw}/opennotebook-web:${VERSION:-0.4.0}
+    image: ${REGISTRY:-lordraw}/opennotebook-web:${VERSION:-0.5.0}
     pull_policy: missing
     ports:
       - "${WEB_BIND:-0.0.0.0}:${WEB_PORT:-8080}:8080"
@@ -72,7 +72,7 @@ services:
 
   worker:
     <<: *app
-    image: ${REGISTRY:-lordraw}/opennotebook-worker:${VERSION:-0.4.0}
+    image: ${REGISTRY:-lordraw}/opennotebook-worker:${VERSION:-0.5.0}
     command: ["worker"]
     depends_on:
       migrate:
@@ -175,6 +175,9 @@ services:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-}
       KC_HEALTH_ENABLED: "true"
+      # Browsers use the public URL (token issuer); the api reaches Keycloak at http://keycloak:8081
+      KC_HOSTNAME: ${KEYCLOAK_PUBLIC_URL:-http://127.0.0.1:8081}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
     ports:
       - "${KEYCLOAK_BIND:-127.0.0.1}:${KEYCLOAK_PORT:-8081}:8081"
     volumes:

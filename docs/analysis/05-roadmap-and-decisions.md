@@ -11,7 +11,7 @@
 | **M2 — Grounded chat** ✅ (2026-11-06) | Hybrid retrieval + rerank, scope and switches, strict prompt, validated citations, SSE, PDF/text viewer with highlighting, 3-column Workbench, save answer as note. | US-01, US-02, US-03, US-09 pass. |
 | **M3 — Extended ingestion** ✅ (2026-11-08) | Archives (hardened), code (tree-sitter), images (OCR + vision), web scraping (SSRF-safe), summary and suggested questions. | US-04, US-05, US-06 pass. |
 | **M4 — Graph and wiki** ✅ (2026-11-08) | Entity/relation extraction, code graph, graph-based retrieval expansion, navigable wiki pages, graph view. | Multi-hop questions improve on the eval set. |
-| **M5 — Advanced research and administration** | Multi-step agent / cited report, encrypted key management UI, groups and full permissions, OIDC, per-project provider policy. | US-07, US-08 pass. |
+| **M5 — Advanced research and administration** ✅ (2026-11-08) | Multi-step agent / cited report, encrypted key management UI, groups and full permissions, OIDC, per-project provider policy. | US-07, US-08 pass. |
 | **M6 — Production** | Observability (OTel, dashboards, alerts, SLOs), hardening, load tests, backup/restore, release bundle, operations docs, first release. | Runbooks and SLOs defined; `make bundle` installs on a host without registry access. |
 
 Continuous RAG quality evaluation from M2: a question/expected-answer dataset per test corpus, measuring recall@k, citation accuracy and correct-abstention rate.
@@ -79,6 +79,18 @@ Continuous RAG quality evaluation from M2: a question/expected-answer dataset pe
 - The "multi-hop questions improve on the eval set" exit criterion still needs the RAG evaluation set (see M2
   limitations); graph expansion is verified by tests and by manual checks.
 
+## 2.5 Known limitations after M5
+
+- Provider keys are managed encrypted in Settings → Providers (since M0). Rotating `APP_ENCRYPTION_KEY` itself
+  (re-encrypting the stored keys) is not automated yet (M6).
+- The deep research agent is a fixed plan → retrieve → write pipeline: no iterative tool loop, no follow-up
+  searches after reading. Each research costs one planning call, one retrieval per step and one long answer.
+- OIDC: no RP-initiated logout (signing out of OpenNotebook does not end the IdP session), no back-channel
+  logout; group sync happens at sign-in only.
+- The provider policy restricts providers, not individual models; an empty policy blocks the project entirely.
+- During an embedding change, sources whose content changed are embedded twice (old and new model) until the
+  switch.
+
 ## 3. Open decisions
 
 Also pending on the operator side: the Hugging Face token in the test `.env` is expired (HTTP 401).
@@ -88,9 +100,9 @@ Also pending on the operator side: the Hugging Face token in the test `.env` is 
 | D2 | Can a source belong to multiple notebooks at the same time? | No in v1 (logical copy without re-embedding if needed). |
 | D4 | ~~Graph: PostgreSQL (simpler) or Neo4j (rich graph queries and visualization)?~~ | Resolved in M4: PostgreSQL (1-hop expansion and per-entity reads are all that is needed so far). |
 | D5 | Vector DB: Qdrant (proposed) or pgvector to reduce components? | Qdrant. |
-| D6 | Authentication: local users, OIDC/Keycloak, corporate LDAP/AD? | Local + OIDC. |
-| D7 | Confidentiality constraints: which projects may use cloud providers? | All allowed by default; per-project "local only" policy available. |
+| D6 | ~~Authentication: local users, OIDC/Keycloak, corporate LDAP/AD?~~ | Resolved in M5: local passwords and/or OIDC (`AUTH_MODE`); LDAP/AD through the IdP (e.g. Keycloak user federation). |
+| D7 | ~~Confidentiality constraints: which projects may use cloud providers?~~ | Resolved in M5: all allowed by default; per-project provider policy (Project settings). |
 | D8 | Expected volumes: users, documents, max archive size? | 50 users, 1M chunks, archives ≤ 2 GB uncompressed. |
 | D9 | Container registry for published images (GHCR, Docker Hub, private)? | GHCR. |
 | D10 | ~~Is multi-page web crawling needed in v1, or single URLs only?~~ | Resolved in M3: single URLs plus an optional bounded crawl (same site, depth ≤ 2, page budget, robots.txt). |
-| D12 | Is sending content to cloud providers acceptable for all projects, or are some projects restricted to the LAN Ollama only? | All cloud providers allowed by default; per-project allowlist available. |
+| D12 | ~~Is sending content to cloud providers acceptable for all projects?~~ | Resolved in M5 with the provider policy (e.g. a project restricted to the LAN Ollama). |

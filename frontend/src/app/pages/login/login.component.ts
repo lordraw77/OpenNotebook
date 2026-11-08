@@ -1,4 +1,4 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, effect, inject, input, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
@@ -8,6 +8,7 @@ import { MatInputModule } from '@angular/material/input';
 import { Router } from '@angular/router';
 
 import { errorMessage } from '../../core/api.service';
+import { AdminApi, AuthConfig } from '../../core/admin.api';
 import { AuthService } from '../../core/auth.service';
 
 @Component({
@@ -31,36 +32,46 @@ import { AuthService } from '../../core/auth.service';
           <mat-card-subtitle>Sign in to continue</mat-card-subtitle>
         </mat-card-header>
         <mat-card-content>
-          <form (ngSubmit)="submit()" class="form">
-            <mat-form-field appearance="outline">
-              <mat-label>Email</mat-label>
-              <input
-                matInput
-                type="email"
-                name="email"
-                [(ngModel)]="email"
-                autocomplete="username"
-                required
-              />
-            </mat-form-field>
-            <mat-form-field appearance="outline">
-              <mat-label>Password</mat-label>
-              <input
-                matInput
-                type="password"
-                name="password"
-                [(ngModel)]="password"
-                autocomplete="current-password"
-                required
-              />
-            </mat-form-field>
-            @if (error()) {
-              <p class="error-text" role="alert">{{ error() }}</p>
+          @if (error()) {
+            <p class="error-text" role="alert">{{ error() }}</p>
+          }
+          @if (config()?.oidc) {
+            <a mat-flat-button class="sso" href="/api/auth/oidc/login?next=/workbench">
+              <mat-icon>key</mat-icon> {{ config()!.oidc_label }}
+            </a>
+            @if (config()!.password) {
+              <div class="or"><span>or</span></div>
             }
-            <button mat-flat-button type="submit" [disabled]="busy() || !email || !password">
-              Sign in
-            </button>
-          </form>
+          }
+          @if (config() === null || config()!.password) {
+            <form (ngSubmit)="submit()" class="form">
+              <mat-form-field appearance="outline">
+                <mat-label>Email</mat-label>
+                <input
+                  matInput
+                  type="email"
+                  name="email"
+                  [(ngModel)]="email"
+                  autocomplete="username"
+                  required
+                />
+              </mat-form-field>
+              <mat-form-field appearance="outline">
+                <mat-label>Password</mat-label>
+                <input
+                  matInput
+                  type="password"
+                  name="password"
+                  [(ngModel)]="password"
+                  autocomplete="current-password"
+                  required
+                />
+              </mat-form-field>
+              <button mat-flat-button type="submit" [disabled]="busy() || !email || !password">
+                Sign in
+              </button>
+            </form>
+          }
         </mat-card-content>
       </mat-card>
     </div>
@@ -95,6 +106,24 @@ import { AuthService } from '../../core/auth.service';
       gap: 10px;
       font-weight: 700;
     }
+    .sso {
+      width: 100%;
+      margin-top: 16px;
+    }
+    .or {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 16px 0 0;
+      color: var(--mat-sys-on-surface-variant);
+      font-size: 12px;
+    }
+    .or::before,
+    .or::after {
+      content: '';
+      flex: 1;
+      border-top: 1px solid var(--mat-sys-outline-variant);
+    }
     .form {
       display: flex;
       flex-direction: column;
@@ -106,6 +135,21 @@ import { AuthService } from '../../core/auth.service';
 export class LoginComponent {
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
+  private readonly admin = inject(AdminApi);
+  /** Message from a failed single sign-on (?error=...). */
+  readonly errorParam = input<string | undefined>(undefined, { alias: 'error' });
+  readonly config = signal<AuthConfig | null>(null);
+
+  constructor() {
+    this.admin
+      .authConfig()
+      .then((c) => this.config.set(c))
+      .catch(() => this.config.set({ password: true, oidc: false, oidc_label: '' }));
+    effect(() => {
+      const message = this.errorParam();
+      if (message) this.error.set(message);
+    });
+  }
 
   email = '';
   password = '';

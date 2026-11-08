@@ -15,10 +15,12 @@ from opennotebook.api import (
     auth,
     conversations,
     graph,
+    groups,
     health,
     ingestion_status,
     nodes,
     notes,
+    projects,
     providers,
     sources,
     users,
@@ -79,9 +81,11 @@ def create_app() -> FastAPI:
         assignments.router,
         sources.router,
         notes.router,
+        projects.router,
         ingestion_status.router,
         conversations.router,
         graph.router,
+        groups.router,
     ):
         app.include_router(router)
 

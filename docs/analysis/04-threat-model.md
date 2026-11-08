@@ -65,6 +65,16 @@ Every model call crosses boundary 4 or 5: no model runs inside the stack (ADR-00
 - **T2**: extraction and wiki prompts wrap passages as data and require JSON / cited text; unreadable replies are
   discarded.
 
+### 3.3 Implementation status (M5)
+
+- **T7**: OIDC with PKCE, state and nonce; ID token verified (JWKS signature, issuer, audience, expiry); no open
+  redirect after sign-in; unverified emails refused by default; `AUTH_MODE=oidc` disables passwords. Tests use a
+  scripted IdP (forged state, nonce, audience and expiry are rejected), and Keycloak was checked end-to-end.
+- **T9**: per-project provider policy enforced in the model gateway for every call; the provider used is
+  recorded on each message and job.
+- **T1 with groups**: group grants go through the same pre-filter; a group reading only `documentation` never
+  sees `source` in the tree, search, chat, research or graph (US-07).
+
 ## 4. Policies
 
 - **Least privilege**: each service has its own DB credentials with minimal rights; Qdrant, Redis and SeaweedFS are reachable only on the internal Docker network, with authentication enabled.

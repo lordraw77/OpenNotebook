@@ -43,6 +43,9 @@ class ProjectIndex(BaseModel):
     sources: int
     chunks: int
     stale_sources: int  # indexed with a model different from the current one
+    # the model whose index answers searches; differs from embedding_model until a re-index completes
+    serving_model: str | None = None
+    switch_pending: bool = False
 
 
 class RecentJob(BaseModel):
@@ -153,6 +156,14 @@ async def ingestion_status(user: CurrentUser, session: SessionDep) -> IngestionS
                     )
                     or 0
                 )
+        from opennotebook.models import ProjectSettings, Provider, ProviderModel
+
+        settings_row = await session.get(ProjectSettings, project.id)
+        serving = None
+        if settings_row is not None and settings_row.embedding_model_id is not None:
+            m = await session.get(ProviderModel, settings_row.embedding_model_id)
+            prov = await session.get(Provider, m.provider_id) if m else None
+            serving = f"{prov.name}/{m.model}" if m and prov else None
         projects.append(
             ProjectIndex(
                 project_id=project.id,
@@ -162,6 +173,13 @@ async def ingestion_status(user: CurrentUser, session: SessionDep) -> IngestionS
                 sources=count,
                 chunks=chunks,
                 stale_sources=stale,
+                serving_model=serving or label,
+                switch_pending=bool(
+                    settings_row
+                    and settings_row.embedding_model_id
+                    and model_id
+                    and settings_row.embedding_model_id != model_id
+                ),
             )
         )
 

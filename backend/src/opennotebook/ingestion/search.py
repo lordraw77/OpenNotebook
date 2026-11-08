@@ -18,7 +18,7 @@ from opennotebook.ingestion.pipeline import node_ids_from_path
 from opennotebook.ingestion.sparse import query_vector
 from opennotebook.ingestion.vectors import VectorIndex, collection_for
 from opennotebook.models import Chunk, ModelPhase, Node, Source, User
-from opennotebook.providers.gateway import ModelGateway
+from opennotebook.providers.gateway import GatewayError, ModelGateway
 
 
 @dataclass
@@ -60,16 +60,29 @@ async def scope_filters(
 async def search_scope(
     session: AsyncSession, index: VectorIndex, user: User, scope: Node, query: str, limit: int = 10
 ) -> tuple[list[SearchHit], str]:
+    from opennotebook.ingestion.index_state import serving_model_id
+
     project_id = uuid.UUID(node_ids_from_path(scope.path)[0])
     gateway = ModelGateway(session)
     chain = await gateway.resolve(ModelPhase.embedding, project_id)
-    embedded = await gateway.embed(
-        [query], project_id, input_type="query", timeout_s=get_settings().search_timeout_s
-    )
+    # The serving index answers (US-08); it differs from the configured model while a re-index runs.
+    model_id = await serving_model_id(session, project_id) or chain[0].model.id
+    timeout = get_settings().search_timeout_s
+    try:
+        embedded = await gateway.embed(
+            [query], project_id, input_type="query", timeout_s=timeout, model_id=model_id
+        )
+    except GatewayError:
+        if model_id == chain[0].model.id:
+            raise
+        model_id = chain[0].model.id  # the serving model is gone (disabled, deleted, not allowed)
+        embedded = await gateway.embed(
+            [query], project_id, input_type="query", timeout_s=timeout, model_id=model_id
+        )
     readable, excluded_nodes, excluded_sources = await scope_filters(session, user, scope)
 
     hits = await index.search(
-        collection_for(chain[0].model.id),
+        collection_for(model_id),
         dense=embedded.value[0],
         sparse=query_vector(query),
         scope_id=str(scope.id),

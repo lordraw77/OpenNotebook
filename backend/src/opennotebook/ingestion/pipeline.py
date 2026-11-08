@@ -62,6 +62,30 @@ def node_ids_from_path(path: str) -> list[str]:
     return [str(uuid.UUID(hex=label[1:])) for label in path.split(".")]
 
 
+_CHUNK_NS = uuid.UUID("6f1c2d3e-8a4b-4c5d-9e6f-0a1b2c3d4e5f")
+
+
+def chunk_uuid(source_id: uuid.UUID, ordinal: int, text: str) -> uuid.UUID:
+    """Deterministic chunk id: re-indexing unchanged content keeps ids (and citations, vectors) valid."""
+    digest = hashlib.sha256(text.encode()).hexdigest()
+    return uuid.uuid5(_CHUNK_NS, f"{source_id}:{ordinal}:{digest}")
+
+
+async def _embed_all(
+    gateway: ModelGateway, texts: list[str], project_id: uuid.UUID, model_id: uuid.UUID
+) -> list[list[float]]:
+    batch = max(1, get_settings().embed_batch_size)
+    vectors: list[list[float]] = []
+    for i in range(0, len(texts), batch):
+        result = await gateway.embed(
+            texts[i : i + batch], project_id, input_type="passage", model_id=model_id
+        )
+        vectors.extend(result.value)
+    if len(vectors) != len(texts):
+        raise GatewayError(f"Embedding provider returned {len(vectors)} vectors for {len(texts)} chunks")
+    return vectors
+
+
 def blob_key(source_id: uuid.UUID, role: str) -> str:
     return f"sources/{source_id}/{role}"
 
@@ -124,9 +148,13 @@ async def ingest_source(
 
         await _set_status(session, source, SourceStatus.chunking)
         chunks = chunk_document(doc, settings.chunk_size_tokens, settings.chunk_overlap_tokens)
+        old_chunk_ids = set(
+            (await session.scalars(select(Chunk.id).where(Chunk.source_id == source.id))).all()
+        )
         await session.execute(delete(Chunk).where(Chunk.source_id == source.id))
         rows = [
             Chunk(
+                id=chunk_uuid(source.id, c.ordinal, c.text),
                 source_id=source.id,
                 ordinal=c.ordinal,
                 text=c.text,
@@ -150,39 +178,70 @@ async def ingest_source(
         model = chain[0].model
         collection = collection_for(model.id)
         job.provider_model = ", ".join([*(job.provider_model or "").split(", "), chain[0].label]).strip(", ")
-        vectors: list[list[float]] = []
-        batch = max(1, settings.embed_batch_size)
         title = source.title
-        for i in range(0, len(chunks), batch):
-            result = await gateway.embed(
-                [embedding_text(title, c) for c in chunks[i : i + batch]], project_id, input_type="passage"
-            )
-            vectors.extend(result.value)
-        if len(vectors) != len(rows):
-            raise GatewayError(f"Embedding provider returned {len(vectors)} vectors for {len(rows)} chunks")
-
-        await index.ensure_collection(collection, len(vectors[0]))
-        if source.vector_collection and source.vector_collection != collection:
-            await index.delete_source(source.vector_collection, source.id)
-        await index.delete_source(collection, source.id)
+        texts = [embedding_text(title, c) for c in chunks]
+        vectors = await _embed_all(gateway, texts, project_id, model.id)
         payload_base = {
             "source_id": str(source.id),
             "notebook_id": str(notebook.id),
             "project_id": str(project_id),
             "ancestors": ancestors,
         }
-        await index.upsert(
+        points = [
+            PointData(
+                chunk_id=row.id,
+                dense=vec,
+                sparse=document_vector(text),
+                payload={**payload_base, "chunk_id": str(row.id), "page": c.page_start},
+            )
+            for row, c, vec, text in zip(rows, chunks, vectors, texts, strict=True)
+        ]
+
+        # US-08: while the project's searches are served by another model's index, keep the source
+        # searchable there: unchanged chunks (same deterministic ids) keep their old vectors; otherwise the
+        # source is embedded with the serving model too.
+        from opennotebook.ingestion import index_state
+
+        serving_id = await index_state.serving_model_id(session, project_id, default=model.id)
+        serving_collection = collection_for(serving_id) if serving_id else collection
+        also_indexed: str | None = None
+        if serving_collection != collection:
+            in_serving = serving_collection in {
+                source.vector_collection,
+                (source.metadata_ or {}).get("also_indexed_in"),
+            }
+            unchanged = in_serving and {r.id for r in rows} == old_chunk_ids
+            if not unchanged:
+                try:
+                    serving_vectors = await _embed_all(gateway, texts, project_id, serving_id)
+                except GatewayError as exc:
+                    source.warnings = [
+                        *source.warnings,
+                        f"Not searchable until the index switch completes: {exc.describe()}"[:300],
+                    ]
+                else:
+                    await index.ensure_collection(serving_collection, len(serving_vectors[0]))
+                    await index.delete_source(serving_collection, source.id)
+                    await index.upsert(
+                        serving_collection,
+                        [
+                            PointData(chunk_id=p.chunk_id, dense=v, sparse=p.sparse, payload=p.payload)
+                            for p, v in zip(points, serving_vectors, strict=True)
+                        ],
+                    )
+            also_indexed = serving_collection
+
+        await index.ensure_collection(collection, len(vectors[0]))
+        for stale in {source.vector_collection, (source.metadata_ or {}).get("also_indexed_in")} - {
+            None,
             collection,
-            [
-                PointData(
-                    chunk_id=row.id,
-                    dense=vec,
-                    sparse=document_vector(embedding_text(title, c)),
-                    payload={**payload_base, "chunk_id": str(row.id), "page": c.page_start},
-                )
-                for row, c, vec in zip(rows, chunks, vectors, strict=True)
-            ],
-        )
+            serving_collection,
+        }:
+            await index.delete_source(stale, source.id)
+        await index.delete_source(collection, source.id)
+        await index.upsert(collection, points)
+        meta = {k: v for k, v in (source.metadata_ or {}).items() if k != "also_indexed_in"}
+        source.metadata_ = {**meta, "also_indexed_in": also_indexed} if also_indexed else meta
         if model.embedding_dim != len(vectors[0]):
             model.embedding_dim = len(vectors[0])
 
@@ -208,6 +267,7 @@ async def ingest_source(
             queue.enqueue_summary(source.id)
         if graph:
             queue.enqueue_graph(source.id)
+        await _try_switch(session, project_id, index)
         return SourceStatus.ready
 
     except TransientFetchError as exc:
@@ -224,6 +284,7 @@ async def ingest_source(
         raise RetryableError(str(exc)) from exc
     except (UnsupportedContent, ParseError) as exc:
         await _fail(session, source_id, job_id, "parse_error", str(exc))
+        await _try_switch(session, project_id, index)
         return SourceStatus.failed
     except GatewayError as exc:
         detail = exc.describe()
@@ -242,6 +303,17 @@ async def ingest_source(
         log.exception("ingestion failed for source %s", source_id)
         await _fail(session, source_id, job_id, "internal_error", exc.__class__.__name__)
         return SourceStatus.failed
+
+
+async def _try_switch(session: AsyncSession, project_id: uuid.UUID, index: VectorIndex) -> None:
+    """A failed or deleted source may have been the last one blocking an index switch."""
+    from opennotebook.ingestion import index_state
+
+    try:
+        await index_state.maybe_switch(session, project_id, index)
+    except Exception:  # noqa: BLE001 - never turn a finished job into an error
+        await session.rollback()
+        log.exception("index switch check failed for project %s", project_id)
 
 
 async def _fail(
@@ -275,8 +347,8 @@ async def purge_source(
     source = await session.get(Source, source_id)
     if source is None:
         return
-    if source.vector_collection:
-        await index.delete_source(source.vector_collection, source.id)
+    for name in {source.vector_collection, (source.metadata_ or {}).get("also_indexed_in")} - {None}:
+        await index.delete_source(name, source.id)
     for blob in (await session.scalars(select(SourceBlob).where(SourceBlob.source_id == source.id))).all():
         await store.delete(blob.object_key)
     await session.execute(delete(SourceBlob).where(SourceBlob.source_id == source.id))
@@ -290,6 +362,8 @@ async def purge_source(
     if notebook is not None:
         await drop_orphans(session, uuid.UUID(node_ids_from_path(notebook.path)[0]))
     await session.commit()
+    if notebook is not None:
+        await _try_switch(session, uuid.UUID(node_ids_from_path(notebook.path)[0]), index)
 
 
 async def refresh_ancestors(session: AsyncSession, node_id: uuid.UUID, *, index: VectorIndex) -> int:
@@ -305,8 +379,8 @@ async def refresh_ancestors(session: AsyncSession, node_id: uuid.UUID, *, index:
         )
     ).all()
     for source, notebook in rows:
-        if source.vector_collection:
-            await index.set_ancestors(source.vector_collection, source.id, node_ids_from_path(notebook.path))
+        for name in {source.vector_collection, (source.metadata_ or {}).get("also_indexed_in")} - {None}:
+            await index.set_ancestors(name, source.id, node_ids_from_path(notebook.path))
     return len(rows)
 
 

@@ -120,6 +120,19 @@ async def decrypt_provider_key(session: AsyncSession, provider: Provider) -> str
 class ModelGateway:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+        self._policy: dict[uuid.UUID | None, set[uuid.UUID] | None] = {}
+
+    async def allowed_providers(self, project_id: uuid.UUID | None) -> set[uuid.UUID] | None:
+        """Provider policy of a project (threat T9): None = no restriction."""
+        if project_id is None:
+            return None
+        if project_id not in self._policy:
+            from opennotebook.models import ProjectSettings
+
+            settings = await self.session.get(ProjectSettings, project_id)
+            ids = settings.allowed_provider_ids if settings is not None else None
+            self._policy[project_id] = {uuid.UUID(str(x)) for x in ids} if ids is not None else None
+        return self._policy[project_id]
 
     async def _chain_rows(self, phase: ModelPhase, project_id: uuid.UUID | None) -> list[PhaseAssignment]:
         async def rows_for(pid: uuid.UUID | None) -> list[PhaseAssignment]:
@@ -151,23 +164,47 @@ class ModelGateway:
         project_id: uuid.UUID | None = None,
         selected_model_id: uuid.UUID | None = None,
     ) -> list[ResolvedModel]:
+        allowed = await self.allowed_providers(project_id)
         chain: list[ResolvedModel] = []
         if selected_model_id is not None:
             selected = await self._resolve_one(selected_model_id)
             if selected is None or not supports_phase(selected.model.capabilities, phase):
                 raise GatewayError(f"Selected model is not available for phase '{phase.value}'")
+            if allowed is not None and selected.provider.id not in allowed:
+                raise GatewayError(
+                    "The selected model's provider is not allowed by this project's provider policy"
+                )
             chain.append(selected)
+        blocked = False
         for row in await self._chain_rows(phase, project_id):
             if any(r.model.id == row.provider_model_id for r in chain):
                 continue
             resolved = await self._resolve_one(row.provider_model_id, row.params)
-            if resolved is not None:
-                chain.append(resolved)
+            if resolved is None:
+                continue
+            if allowed is not None and resolved.provider.id not in allowed:
+                blocked = True
+                continue
+            chain.append(resolved)
         if phase in SINGLE_MODEL_PHASES:
             chain = chain[:1]
         if not chain:
+            if blocked:
+                raise GatewayError(
+                    f"No model allowed by this project's provider policy for phase '{phase.value}'"
+                )
             raise GatewayError(f"No model configured for phase '{phase.value}'")
         return chain
+
+    async def resolve_model(self, model_id: uuid.UUID, project_id: uuid.UUID | None = None) -> ResolvedModel:
+        """One specific model (e.g. the embedding model serving an index), with the project policy applied."""
+        resolved = await self._resolve_one(model_id)
+        if resolved is None:
+            raise GatewayError("The model is disabled or no longer exists")
+        allowed = await self.allowed_providers(project_id)
+        if allowed is not None and resolved.provider.id not in allowed:
+            raise GatewayError("The model's provider is not allowed by this project's provider policy")
+        return resolved
 
     async def _run(self, chain: list[ResolvedModel], call) -> CallResult:  # type: ignore[no-untyped-def]
         attempts: list[dict] = []
@@ -213,14 +250,19 @@ class ModelGateway:
         project_id: uuid.UUID | None = None,
         input_type: str = "passage",
         timeout_s: int | None = None,
+        model_id: uuid.UUID | None = None,
     ) -> CallResult:
         """Embed documents (input_type="passage") or a search query (input_type="query").
 
         `timeout_s` caps the provider timeout, e.g. for interactive searches on a slow provider.
+        `model_id` forces a specific embedding model (the one serving an index) instead of the chain.
         """
         import litellm
 
-        chain = await self.resolve(ModelPhase.embedding, project_id)
+        if model_id is not None:
+            chain = [await self.resolve_model(model_id, project_id)]
+        else:
+            chain = await self.resolve(ModelPhase.embedding, project_id)
 
         async def call(r: ResolvedModel) -> list[list[float]]:
             resp = await litellm.aembedding(

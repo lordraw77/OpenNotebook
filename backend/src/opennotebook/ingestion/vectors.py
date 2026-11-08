@@ -85,6 +85,16 @@ class VectorIndex:
             wait=True,
         )
 
+    async def delete_project(self, name: str, project_id: uuid.UUID) -> None:
+        """Remove every vector of a project from one collection (old index after a switch)."""
+        if not await self.client.collection_exists(name):
+            return
+        await self.client.delete(
+            name,
+            points_selector=models.FilterSelector(filter=_match("project_id", str(project_id))),
+            wait=True,
+        )
+
     async def set_ancestors(self, name: str, source_id: uuid.UUID, ancestors: list[str]) -> None:
         if not await self.client.collection_exists(name):
             return

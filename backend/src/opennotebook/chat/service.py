@@ -111,7 +111,11 @@ async def _history(session: AsyncSession, conversation_id: uuid.UUID, before: uu
 
 
 async def answer_stream(
-    conversation_id: uuid.UUID, user_id: uuid.UUID, question: str, model_id: uuid.UUID | None
+    conversation_id: uuid.UUID,
+    user_id: uuid.UUID,
+    question: str,
+    model_id: uuid.UUID | None,
+    mode: str = "chat",
 ) -> AsyncIterator[str]:
     """The caller has already checked that the user owns the conversation and can read its scope."""
     settings = get_settings()
@@ -144,7 +148,23 @@ async def answer_stream(
                 if m.status == "complete" and m.content
             ]
             query = retrieval_query(question, [m.content for m in previous if m.role == "user"])
-            retrieved = await retrieve(session, get_vector_index(), user, scope, query)
+            project_id = uuid.UUID(node_ids_from_path(scope.path)[0])
+            research_plan: list[str] | None = None
+            if mode == "research":
+                from opennotebook.chat.research import gather, plan
+
+                yield sse("status", {"stage": "planning"})
+                subs, planner = await plan(ModelGateway(session), query, project_id, model_id)
+                research_plan = [query, *subs]
+                yield sse("plan", {"sub_questions": research_plan, "model": planner})
+                for i, sub in enumerate(research_plan):
+                    yield sse(
+                        "status",
+                        {"stage": "researching", "step": i + 1, "of": len(research_plan), "question": sub},
+                    )
+                retrieved = await gather(session, get_vector_index(), user, scope, research_plan)
+            else:
+                retrieved = await retrieve(session, get_vector_index(), user, scope, query)
             context = [
                 {**context_entry(i + 1, h), "via": "graph" if h.chunk.id in retrieved.via_graph else "search"}
                 for i, h in enumerate(retrieved.hits)
@@ -154,6 +174,8 @@ async def answer_stream(
                 "embedding_model": retrieved.embedding_model,
                 "rerank_model": retrieved.rerank_model,
                 "warnings": retrieved.warnings,
+                "mode": mode,
+                **({"plan": research_plan} if research_plan else {}),
             }
             yield sse(
                 "sources",
@@ -181,13 +203,20 @@ async def answer_stream(
                     )
                     for c in context
                 ]
-                messages = build_messages(history, passages, question)
+                if mode == "research":
+                    from opennotebook.chat.research import REPORT_INSTRUCTIONS
+
+                    messages = build_messages(history, passages, question, REPORT_INSTRUCTIONS)
+                    max_tokens = settings.research_max_tokens
+                else:
+                    messages = build_messages(history, passages, question)
+                    max_tokens = settings.chat_max_tokens
                 async for ev in ModelGateway(session).stream_chat(
                     messages,
-                    project_id=uuid.UUID(node_ids_from_path(scope.path)[0]),
+                    project_id=project_id,
                     selected_model_id=model_id,
                     first_token_timeout_s=settings.chat_first_token_timeout_s,
-                    max_tokens=settings.chat_max_tokens,
+                    max_tokens=max_tokens,
                 ):
                     if ev.kind == "provider" and ev.used is not None:
                         answer.provider_model_id = ev.used.model.id

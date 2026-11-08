@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -44,6 +45,8 @@ class ConversationUpdate(BaseModel):
 class QuestionIn(BaseModel):
     content: str = Field(min_length=1, max_length=8000)
     model_id: uuid.UUID | None = None
+    # "research": plan sub-questions, retrieve for each, write a structured cited report
+    mode: Literal["chat", "research"] = "chat"
 
 
 async def _own(session: SessionDep, user: CurrentUser, conversation_id: uuid.UUID) -> Conversation:
@@ -122,7 +125,7 @@ async def ask(
     """Ask a question; the answer streams as server-sent events (see opennotebook.chat.service)."""
     conv = await _own(session, user, conversation_id)
     return StreamingResponse(
-        answer_stream(conv.id, user.id, body.content.strip(), body.model_id),
+        answer_stream(conv.id, user.id, body.content.strip(), body.model_id, body.mode),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
     )

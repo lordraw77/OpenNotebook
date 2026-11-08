@@ -88,6 +88,12 @@ import { IngestionStatus, SourcesApi } from '../../core/sources.api';
                 @if (p.embedding_source === 'project') {
                   <span class="cap">project override</span>
                 }
+                @if (p.switch_pending) {
+                  <div class="muted small-note">
+                    <mat-icon inline>sync</mat-icon> searches still served by
+                    <strong>{{ p.serving_model }}</strong> until every source is re-indexed
+                  </div>
+                }
               </td>
             </ng-container>
             <ng-container matColumnDef="sources">
@@ -188,6 +194,10 @@ import { IngestionStatus, SourcesApi } from '../../core/sources.api';
     </div>
   `,
   styles: `
+    .small-note {
+      font-size: 12px;
+      margin-top: 2px;
+    }
     .spacer {
       flex: 1;
     }

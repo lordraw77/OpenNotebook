@@ -90,6 +90,8 @@ class User(TimestampMixin, Base):
     password_hash: Mapped[str | None] = mapped_column(Text)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # `sub` claim of the identity provider (OIDC sign-in); NULL for local-only accounts
+    oidc_subject: Mapped[str | None] = mapped_column(String(255), unique=True)
 
 
 class Group(TimestampMixin, Base):
@@ -97,6 +99,9 @@ class Group(TimestampMixin, Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String(200), unique=True)
+    description: Mapped[str | None] = mapped_column(Text)
+    # local | oidc (members synchronized from the identity provider at sign-in)
+    source: Mapped[str] = mapped_column(String(20), default="local", server_default="local")
 
 
 class GroupMember(Base):
@@ -288,6 +293,11 @@ class Source(TimestampMixin, Base):
             postgresql_where=text("deleted_at IS NULL AND kind <> 'note'"),
         ),
         Index("ix_sources_status_open", "status", postgresql_where=text("status NOT IN ('ready','failed')")),
+        Index(
+            "ix_sources_parent_source_id",
+            "parent_source_id",
+            postgresql_where=text("parent_source_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
@@ -453,7 +463,9 @@ class EntityMention(Base):
     entity_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("entities.id", ondelete="CASCADE"), primary_key=True
     )
-    chunk_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("chunks.id", ondelete="CASCADE"), primary_key=True)
+    chunk_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("chunks.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
     source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sources.id", ondelete="CASCADE"), index=True)
     # surface form and what this passage says about the entity
     name: Mapped[str] = mapped_column(String(300))
@@ -491,3 +503,28 @@ class WikiPage(Base):
     citations: Mapped[list] = mapped_column(JSONB, default=list)
     model_label: Mapped[str | None] = mapped_column(String(400))
     generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ProjectSettings(Base):
+    """Per-project settings that are not model chains.
+
+    - `allowed_provider_ids`: provider policy (threat T9). NULL = every enabled provider; otherwise model
+      calls for this project only go to these providers (e.g. "LAN only": the Ollama provider).
+    - `embedding_model_id`: the embedding model whose index *serves* searches. When the project's embedding
+      chain changes, searches keep using this index while sources are re-indexed with the new model; it is
+      switched atomically once every source has vectors from the new model (US-08).
+    """
+
+    __tablename__ = "project_settings"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("nodes.id", ondelete="CASCADE"), primary_key=True
+    )
+    allowed_provider_ids: Mapped[list | None] = mapped_column(JSONB)
+    embedding_model_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("provider_models.id", ondelete="SET NULL")
+    )
+    index_switched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

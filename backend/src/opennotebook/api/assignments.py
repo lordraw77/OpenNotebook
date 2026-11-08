@@ -140,7 +140,13 @@ async def selectable_models(
     index; `include_all=true` lists every candidate, for the configuration screens.
     """
     if project_id is not None:
-        await _require_project(session, user, project_id, GrantRole.viewer)
+        # Anyone who can chat in the project (even with access to a single workspace inside it) may list
+        # the models; the same rule as searching the project scope.
+        from opennotebook.acl import get_search_scope
+
+        node = await get_search_scope(session, user, project_id)
+        if node.kind != NodeKind.project:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "project_id must reference a project")
     chain = await _chain(session, phase, project_id) if project_id else []
     if not chain:
         chain = await _chain(session, phase, None)
@@ -161,4 +167,10 @@ async def selectable_models(
     for m, p in (await session.execute(stmt)).all():
         if m.id not in seen:
             ordered.append(model_out(m, p))
+    if project_id is not None:
+        from opennotebook.providers.gateway import ModelGateway
+
+        allowed = await ModelGateway(session).allowed_providers(project_id)
+        if allowed is not None:
+            ordered = [m for m in ordered if m.provider_id in allowed]
     return ordered

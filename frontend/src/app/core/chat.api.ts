@@ -37,6 +37,8 @@ export interface MessageDto {
     embedding_model?: string;
     rerank_model?: string | null;
     warnings?: string[];
+    mode?: 'chat' | 'research';
+    plan?: string[];
   };
   model_label: string | null;
   attempts: Attempt[];
@@ -48,7 +50,16 @@ export interface MessageDto {
 
 export type ChatEvent =
   | { event: 'message'; data: MessageDto }
-  | { event: 'status'; data: { stage: 'retrieving' | 'generating' } }
+  | {
+      event: 'status';
+      data: {
+        stage: 'retrieving' | 'generating' | 'planning' | 'researching';
+        step?: number;
+        of?: number;
+        question?: string;
+      };
+    }
+  | { event: 'plan'; data: { sub_questions: string[]; model: string | null } }
   | {
       event: 'sources';
       data: {
@@ -120,6 +131,7 @@ export class ChatApi {
     modelId: string | null,
     onEvent: (e: ChatEvent) => void,
     signal: AbortSignal,
+    mode: 'chat' | 'research' = 'chat',
   ): Promise<void> {
     const send = () =>
       fetch(`/api/conversations/${conversationId}/messages`, {
@@ -129,7 +141,7 @@ export class ChatApi {
           Accept: 'text/event-stream',
           Authorization: `Bearer ${this.auth.accessToken() ?? ''}`,
         },
-        body: JSON.stringify({ content, model_id: modelId }),
+        body: JSON.stringify({ content, model_id: modelId, mode }),
         signal,
       });
     let res = await send();

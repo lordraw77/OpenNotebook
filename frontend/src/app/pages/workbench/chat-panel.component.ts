@@ -21,6 +21,7 @@ import { MatInputModule } from '@angular/material/input';
 import { MatMenuModule } from '@angular/material/menu';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatSelectModule } from '@angular/material/select';
+import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 
@@ -31,7 +32,9 @@ import { AnswerViewComponent } from './answer-view.component';
 
 interface Pending {
   question: string;
-  stage: 'retrieving' | 'generating' | 'answering';
+  stage: 'retrieving' | 'generating' | 'answering' | 'planning' | 'researching';
+  plan: string[];
+  step: { n: number; of: number; question: string } | null;
   context: Citation[];
   content: string;
   model: string | null;
@@ -57,6 +60,7 @@ export interface NotebookOption {
     MatMenuModule,
     MatProgressBarModule,
     MatSelectModule,
+    MatSlideToggleModule,
     MatTooltipModule,
     AnswerViewComponent,
   ],
@@ -116,6 +120,19 @@ export interface NotebookOption {
           <div class="q">{{ m.content }}</div>
         } @else {
           <article class="a" [class.failed]="m.status === 'error'">
+            @if (m.checks.mode === 'research') {
+              <details class="research">
+                <summary>
+                  <mat-icon inline>travel_explore</mat-icon> Research report ·
+                  {{ m.checks.plan?.length ?? 0 }} search steps, {{ m.context.length }} passages
+                </summary>
+                <ol class="plan">
+                  @for (q of m.checks.plan ?? []; track $index) {
+                    <li>{{ q }}</li>
+                  }
+                </ol>
+              </details>
+            }
             <app-answer-view
               [content]="m.content"
               [citations]="m.context"
@@ -210,14 +227,22 @@ export interface NotebookOption {
           <div class="q">{{ p.question }}</div>
         }
         <article class="a">
+          @if (p.plan.length) {
+            <ol class="plan">
+              @for (q of p.plan; track $index) {
+                <li
+                  [class.done]="p.step && $index + 1 < p.step.n"
+                  [class.now]="p.step?.n === $index + 1"
+                >
+                  {{ q }}
+                </li>
+              }
+            </ol>
+          }
           @if (p.stage !== 'answering') {
             <div class="stage muted">
               <mat-progress-bar mode="indeterminate"></mat-progress-bar>
-              {{
-                p.stage === 'retrieving'
-                  ? 'Searching the sources…'
-                  : 'Reading ' + p.context.length + ' passages…'
-              }}
+              {{ stageText(p) }}
             </div>
           }
           <app-answer-view
@@ -257,6 +282,14 @@ export interface NotebookOption {
           (keydown.enter)="onEnter($event)"
         ></textarea>
       </mat-form-field>
+      <mat-slide-toggle
+        class="research-toggle"
+        [checked]="research()"
+        (change)="research.set($event.checked)"
+        [disabled]="streaming()"
+        matTooltip="Plan sub-questions, search each one and write a structured report with citations (slower)"
+        >Deep research</mat-slide-toggle
+      >
       @if (streaming()) {
         <button mat-stroked-button type="button" (click)="stop()">
           <mat-icon>stop</mat-icon> Stop
@@ -406,6 +439,31 @@ export interface NotebookOption {
     .small {
       font-size: 12px;
     }
+    .plan {
+      margin: 4px 0 8px;
+      padding-left: 20px;
+      font-size: 13px;
+      color: var(--mat-sys-on-surface-variant);
+    }
+    .plan li.done {
+      text-decoration: line-through;
+      opacity: 0.7;
+    }
+    .plan li.now {
+      color: var(--mat-sys-primary);
+      font-weight: 500;
+    }
+    .research {
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+    .research summary {
+      cursor: pointer;
+      color: var(--mat-sys-tertiary);
+    }
+    .research-toggle {
+      flex: none;
+    }
     .composer {
       display: flex;
       gap: 8px;
@@ -442,6 +500,7 @@ export class ChatPanelComponent {
   readonly pending = signal<Pending | null>(null);
   readonly error = signal<string | null>(null);
   readonly streaming = computed(() => this.pending() !== null);
+  readonly research = signal(false);
   question = '';
   private abort: AbortController | null = null;
 
@@ -526,7 +585,9 @@ export class ChatPanelComponent {
     this.question = '';
     this.pending.set({
       question,
-      stage: 'retrieving',
+      plan: [],
+      step: null,
+      stage: this.research() ? 'planning' : 'retrieving',
       context: [],
       content: '',
       model: null,
@@ -548,6 +609,7 @@ export class ChatPanelComponent {
         this.modelId(),
         (e) => this.onEvent(e),
         this.abort.signal,
+        this.research() ? 'research' : 'chat',
       );
     } catch (err) {
       if ((err as Error).name !== 'AbortError') this.error.set(errorMessage(err));
@@ -571,7 +633,17 @@ export class ChatPanelComponent {
         this.pending.set({ ...p, question: '' });
         break;
       case 'status':
-        this.pending.set({ ...p, stage: e.data.stage });
+        this.pending.set({
+          ...p,
+          stage: e.data.stage,
+          step:
+            e.data.stage === 'researching'
+              ? { n: e.data.step ?? 0, of: e.data.of ?? 0, question: e.data.question ?? '' }
+              : p.step,
+        });
+        break;
+      case 'plan':
+        this.pending.set({ ...p, plan: e.data.sub_questions });
         break;
       case 'sources':
         this.pending.set({ ...p, context: e.data.context });
@@ -660,6 +732,19 @@ export class ChatPanelComponent {
       this.toast('Copied');
     } catch {
       this.toast('Copy is not available in this browser context');
+    }
+  }
+
+  protected stageText(p: Pending): string {
+    switch (p.stage) {
+      case 'planning':
+        return 'Planning the research…';
+      case 'researching':
+        return p.step ? `Searching ${p.step.n} of ${p.step.of}: ${p.step.question}` : 'Searching…';
+      case 'retrieving':
+        return 'Searching the sources…';
+      default:
+        return `Reading ${p.context.length} passages…`;
     }
   }
 

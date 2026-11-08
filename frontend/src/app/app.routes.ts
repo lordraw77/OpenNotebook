@@ -57,6 +57,13 @@ export const routes: Routes = [
               import('./pages/settings/providers.component').then((m) => m.ProvidersComponent),
           },
           {
+            path: 'groups',
+            title: 'Groups · OpenNotebook',
+            canActivate: [adminGuard],
+            loadComponent: () =>
+              import('./pages/settings/groups.component').then((m) => m.GroupsComponent),
+          },
+          {
             path: 'users',
             title: 'Users · OpenNotebook',
             canActivate: [adminGuard],

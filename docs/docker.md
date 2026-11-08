@@ -96,7 +96,7 @@ docker compose --env-file .env -f deploy/compose/docker-compose.yml --profile ob
 | Profile | Adds | Use when |
 |---|---|---|
 | *(none)* | web, api, worker, migrate, postgres, qdrant, seaweedfs, redis | always: a complete, working instance |
-| `auth` | Keycloak on `127.0.0.1:8081` | OIDC single sign-on (application integration in M5) |
+| `auth` | Keycloak on `${KEYCLOAK_BIND}:8081` (public URL `KEYCLOAK_PUBLIC_URL`) | OIDC single sign-on (see [deploy.md](deploy.md#single-sign-on-optional)) |
 | `observability` | Prometheus on `127.0.0.1:9090` (scrapes `api:8000/metrics`), Grafana on `127.0.0.1:3000` | metrics dashboards; OTel traces and Loki logs arrive in M6 |
 
 There is no model-serving profile. Ollama, if used, is your existing external server, set with `OLLAMA_API_BASE`.
@@ -159,6 +159,7 @@ length, the answer length and the interactive timeouts; defaults are in `.env.ex
 | `make release VERSION=x.y.z REGISTRY=…` | build, check and push images (`VERSION` and `latest`) |
 | `make hub-publish` | build, check, create/update the Docker Hub repositories with their overview (`docs/dockerhub/`), push `VERSION` and `latest` |
 | `make clean` | stop and **delete all volumes** (asks for confirmation) |
+| `docker compose … run --rm api reset-admin` | create the administrator or reset its password (from `BOOTSTRAP_ADMIN_*`) |
 
 Use another env file with `ENV_FILE=path`, e.g. `make up ENV_FILE=.env.staging`.
 
@@ -201,4 +202,8 @@ tar xzf opennotebook-<version>-bundle.tar.gz && cd opennotebook-<version>
 | Images are slow to index | each image costs an OCR and a vision call; a CPU-only Ollama vision model takes minutes per image — use a cloud vision model for the project |
 | Web page fails with "Address … is not allowed" | the host resolves to a private or reserved address (SSRF protection); set `WEB_ALLOW_PRIVATE=true` only if intranet sites must be indexed |
 | Archive fails with "compression ratio" / "uncompressed" | a safety limit was hit (`ARCHIVE_MAX_RATIO`, `ARCHIVE_MAX_UNCOMPRESSED_MB`, `ARCHIVE_MAX_FILES`); raise it only for trusted archives |
+| SSO sign-in fails with "Invalid ID token (InvalidIssuerError)" | the issuer seen by browsers differs from the one in tokens: with the bundled Keycloak set `KEYCLOAK_PUBLIC_URL` to the URL browsers use (it is passed as `KC_HOSTNAME`, with dynamic back-channel URLs for the api) |
+| SSO returns to the login page with "The sign-in attempt expired" | the state cookie was not sent back: open the UI at exactly `APP_PUBLIC_URL` (same host and scheme) |
+| Chat says "No model allowed by this project's provider policy" | the project's policy (Project settings… in the Workbench) excludes every model of the phase's chain; allow a provider or add a model of an allowed provider to the chain |
+| After changing the embedding model, search results come from the old model | expected until every source is re-indexed (RAG Status → Re-index): the old index keeps serving, then the switch is atomic |
 | Unexpected profile services start | inline comment in `.env` on `COMPOSE_PROFILES` (see Configuration) |

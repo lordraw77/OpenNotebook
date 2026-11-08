@@ -21,6 +21,7 @@ import { ApiService, errorMessage } from '../../core/api.service';
 import { Citation, SourceDto, SourcesApi, TERMINAL } from '../../core/sources.api';
 import { ChatPanelComponent, NotebookOption } from './chat-panel.component';
 import { NameDialogComponent, ShareDialogComponent } from './dialogs';
+import { ProjectSettingsDialogComponent } from './project-settings.dialog';
 import { NotesPanelComponent } from './notes-panel.component';
 import { SearchPanelComponent } from './search-panel.component';
 import { SourceDetailComponent } from './source-detail.component';
@@ -248,6 +249,10 @@ export class WorkbenchComponent {
     if (!confirm(`Delete “${node.name}” and everything inside it, including its sources?`)) return;
     await this.run(() => this.api.deleteNode(node.id), 'Deleted');
     if (this.selectedId() === node.id) this.selectedId.set(null);
+  }
+
+  projectSettings(node: TreeNodeDto): void {
+    this.dialog.open(ProjectSettingsDialogComponent, { data: node, width: 'min(640px, 95vw)' });
   }
 
   share(node: TreeNodeDto): void {

@@ -295,6 +295,45 @@ backoff up to `INGESTION_MAX_ATTEMPTS`, parse errors fail immediately.
 - Not implemented: community detection and topic pages, embedding-based entity resolution (e.g. "AP" =
   "access point"), graph-aware query planning (M5).
 
+### 4.3 Administration and research (M5)
+
+- **Groups** (`api/groups.py`): administrators manage groups and members; any user can look up group names to
+  share a node with a group (`node_grants.principal_type = group`, already honoured by `acl.granted_paths`).
+  Deleting a group removes its grants. US-07 is covered by tests and by an SSO end-to-end check.
+- **Single sign-on** (`oidc.py`, `/api/auth/oidc/*`, ADR-009): Authorization Code + PKCE, with state, nonce and
+  verifier in a signed 10-minute cookie (`SameSite=Lax`, because the callback is a cross-site navigation).
+  - The code is exchanged server side; the ID token is verified against the provider's JWKS (rotation-aware),
+    issuer, audience, expiry and nonce.
+  - Accounts are found by `sub`, then linked by verified email, or created when `OIDC_AUTO_CREATE_USERS`.
+  - The `groups` claim is synchronized: SSO-managed groups are created and left; local groups with the same
+    name are joined and never left.
+  - `OIDC_ADMIN_GROUPS` makes the IdP authoritative for the admin role.
+  - `AUTH_MODE=local|oidc|both`; with `oidc`, password sign-in is refused. The `next` target is restricted to
+    same-site paths.
+  - With the bundled Keycloak, `KC_HOSTNAME` (the public URL) and dynamic back-channel URLs make browser-facing
+    endpoints and the token issuer public while the api uses `keycloak:8081`.
+- **Provider policy** (`project_settings.allowed_provider_ids`, threat T9): `ModelGateway.resolve` drops chain
+  entries of providers not allowed for the project and refuses a selected model of a blocked provider. It also
+  refuses phases left without models ("No model allowed by this project's provider policy"). Every model call
+  of the project is covered: chat, research, embeddings, OCR, vision, summaries, graph, wiki and rerank. The
+  chat model selector lists allowed models only.
+- **Zero-downtime embedding change** (US-08, `ingestion/index_state.py`):
+  - `project_settings.embedding_model_id` is the *serving* index; searches always embed the query with it.
+  - When the configured embedding model differs, ingestion embeds with the new model. A source stays searchable
+    in the serving index: chunk ids are deterministic (`uuid5(source, ordinal, sha256(text))`), so unchanged
+    chunks keep their old vectors; otherwise the source is embedded with both models.
+  - After every finished, failed or purged source, `maybe_switch` locks the settings row. When nothing is queued
+    or processing and every ready source has vectors of the new model, it switches the serving model in one
+    update and deletes the project's points from the old collection.
+  - Verified live: 161 searches during a 28-source re-index, all answered, then one switch.
+- **Deep research** (`chat/research.py`, chat `mode: research`): the chat model plans up to
+  `RESEARCH_MAX_SUB_QUESTIONS` sub-questions (JSON). Each one, plus the question itself, goes through the normal
+  scoped retrieval (hybrid, rerank, graph expansion). Results are merged round-robin without duplicates into
+  `RESEARCH_MAX_PASSAGES` passages. The report prompt asks for summary, sections and conclusion, with the same
+  citation validation. Events: `plan` and `status` steps; the plan is stored in `checks.plan`.
+- **`opennotebook reset-admin`**: creates the administrator or resets its password, role and active state, and
+  revokes its refresh tokens.
+
 ## 5. Highlighting in the source
 
 | Type | Anchor stored on the chunk | Rendering |

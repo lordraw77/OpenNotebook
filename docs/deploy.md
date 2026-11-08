@@ -48,6 +48,20 @@ Set at least:
 Rules: write comments on their own line (Compose does not strip inline comments), and keep
 `APP_ENCRYPTION_KEY` safe — it decrypts the provider keys stored in the database.
 
+### Single sign-on (optional)
+
+OpenNotebook supports OpenID Connect (Authorization Code with PKCE) against any provider (Keycloak, Entra ID,
+Google, Authentik, …). Settings in `.env`: `AUTH_MODE=both` (or `oidc` to disable passwords), `OIDC_ISSUER_URL`,
+`OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`; register `<APP_PUBLIC_URL>/api/auth/oidc/callback` as redirect URI.
+Accounts are created at the first sign-in (`OIDC_AUTO_CREATE_USERS`), linked to existing accounts by verified
+email, and the `groups` claim is synchronized into OpenNotebook groups (`OIDC_ADMIN_GROUPS` grants the admin role).
+
+With the bundled Keycloak (`--profile auth`): set `KEYCLOAK_BIND=0.0.0.0`,
+`KEYCLOAK_PUBLIC_URL=http://<host>:8081` (the URL browsers use; it becomes the token issuer) and
+`OIDC_ISSUER_URL=http://keycloak:8081/realms/<realm>` (the api reaches Keycloak on the internal network). In the
+realm, create a confidential client with the redirect URI above and a "Group Membership" mapper (claim `groups`,
+full path off, added to the ID token).
+
 ## 4. Start
 
 ```bash
@@ -106,7 +120,19 @@ line; take a backup before upgrading.
 - Health: `docker compose ps`; the **RAG Status** page shows queues, failed sources and recent jobs.
 - Troubleshooting table: [docker.md](docker.md#troubleshooting).
 
-## 9. Without registry access
+## 9. Administrator access
+
+Lost the administrator password, or need an administrator on an SSO-only instance:
+
+```bash
+# uses BOOTSTRAP_ADMIN_EMAIL / BOOTSTRAP_ADMIN_PASSWORD from .env (edit them first), or --email / RESET_ADMIN_PASSWORD
+docker compose run --rm api reset-admin
+```
+
+It creates the account or resets its password, admin role and active state, and revokes its sessions.
+Password sign-in must be enabled (`AUTH_MODE=local` or `both`) to use it.
+
+## 10. Without registry access
 
 Build a self-contained bundle on a machine with the source tree: `make bundle` produces
 `dist/opennotebook-<version>-bundle.tar.gz` (images + compose files + `.env.example` + `install.sh`).

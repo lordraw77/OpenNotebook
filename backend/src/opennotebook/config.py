@@ -74,6 +74,11 @@ class Settings(BaseSettings):
     wiki_max_passages: int = 12
     wiki_timeout_s: int = 120
 
+    # Deep research mode
+    research_max_sub_questions: int = 5
+    research_max_passages: int = 24
+    research_max_tokens: int = 4096
+
     # Grounded chat
     # passages retrieved by hybrid search before rerank / diversification
     chat_candidates: int = 40
@@ -118,8 +123,31 @@ class Settings(BaseSettings):
     s3_secret_key: str = ""
     filesystem_root: str = "/data/blobs"
 
-    # Authentication
-    auth_mode: Literal["local", "oidc"] = "local"
+    # Authentication: local passwords, OpenID Connect single sign-on, or both
+    auth_mode: Literal["local", "oidc", "both"] = "local"
+    oidc_issuer_url: str = ""
+    oidc_client_id: str = ""
+    oidc_client_secret: str = ""
+    oidc_scopes: str = "openid email profile"
+    oidc_label: str = "Single sign-on"
+    # create an account at the first SSO sign-in (otherwise an administrator creates it first)
+    oidc_auto_create_users: bool = True
+    # claim with the user's groups (Keycloak: "groups" with the group-membership mapper)
+    oidc_groups_claim: str = "groups"
+    oidc_sync_groups: bool = True
+    # comma-separated IdP groups whose members are OpenNotebook administrators (empty = not managed by SSO)
+    oidc_admin_groups: str = ""
+    # accept identities whose email_verified claim is false (not recommended)
+    oidc_allow_unverified_email: bool = False
+
+    @property
+    def password_login_enabled(self) -> bool:
+        return self.auth_mode in ("local", "both")
+
+    @property
+    def oidc_enabled(self) -> bool:
+        return self.auth_mode in ("oidc", "both") and bool(self.oidc_issuer_url and self.oidc_client_id)
+
     bootstrap_admin_email: str = ""
     bootstrap_admin_password: str = ""
 

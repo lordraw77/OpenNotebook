@@ -163,6 +163,11 @@
           }
           <button mat-menu-item (click)="rename(node)"><mat-icon>edit</mat-icon> Rename</button>
         }
+        @if (node.kind === 'project' && node.role) {
+          <button mat-menu-item (click)="projectSettings(node)">
+            <mat-icon>tune</mat-icon> Project settings…
+          </button>
+        }
         @if (hasRole(node, 'owner')) {
           <button mat-menu-item (click)="share(node)"><mat-icon>share</mat-icon> Share…</button>
           <mat-divider></mat-divider>

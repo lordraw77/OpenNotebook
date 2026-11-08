@@ -36,6 +36,14 @@ import { AuthService } from '../../core/auth.service';
             [active]="u.isActive"
             >Users</a
           >
+          <a
+            mat-tab-link
+            routerLink="groups"
+            routerLinkActive
+            #g="routerLinkActive"
+            [active]="g.isActive"
+            >Groups</a
+          >
         }
       </nav>
       <mat-tab-nav-panel #panel><router-outlet /></mat-tab-nav-panel>

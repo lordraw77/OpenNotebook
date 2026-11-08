@@ -69,7 +69,10 @@ def build_context(passages: Sequence[ContextPassage]) -> str:
     return "<sources>\n" + "\n".join(blocks) + "\n</sources>"
 
 
-def build_messages(history: Sequence[dict], passages: Sequence[ContextPassage], question: str) -> list[dict]:
+def build_messages(
+    history: Sequence[dict], passages: Sequence[ContextPassage], question: str, instructions: str = ""
+) -> list[dict]:
     """System prompt, previous turns (plain text), then the question with its sources."""
-    user = f"{build_context(passages)}\n\nQuestion: {question}\n\n{REMINDER}"
+    extra = f"{instructions}\n" if instructions else ""
+    user = f"{build_context(passages)}\n\nQuestion: {question}\n\n{extra}{REMINDER}"
     return [{"role": "system", "content": SYSTEM_PROMPT}, *history, {"role": "user", "content": user}]

@@ -182,6 +182,11 @@ description: it lives on mentions), `entity_mentions` (entity, chunk, source, su
 `relations` (src, dst, type, description, evidence chunk and source), `wiki_pages` (entity, `basis` = hash of the
 passages used, body, citations), and `sources.graph_status` / `graph_model` / `graph_error`. Mentions and relations
 cascade with their chunks; visibility is derived from the evidence source (see architecture §4.2).
+Implemented in migration `0006` (M5): `groups.description`, `groups.source` (`local` | `oidc`),
+`users.oidc_subject` (unique), and `project_settings(project_id, allowed_provider_ids, embedding_model_id,
+index_switched_at)`: the provider policy and the embedding model whose index serves searches (backfilled for
+existing projects from their indexed sources). Chunk ids are now deterministic (uuid5 of source, ordinal and text
+hash).
 The other tables arrive with their milestone.
 
 ## 3. Scope and permission rules

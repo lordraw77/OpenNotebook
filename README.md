@@ -6,15 +6,13 @@ Upload documents, source code, archives, images, web pages and notes, organize t
 **Project → Workspace → Notebook** tree, and chat with an LLM that answers **only** from the sources in the selected
 scope. Every claim cites its source (`[Source 1, p. 4]`), and clicking a citation highlights the exact passage.
 
-> **Status: milestones M0–M4 complete** (foundations, ingestion, grounded chat, extended ingestion, knowledge
-> graph and wiki). Runs today: the
-> packaged stack, login, the hierarchy with sharing and on/off switches, the provider registry for nine providers,
-> model selection per phase (global and per project), indexing of documents, source code, archives, images, scanned
-> PDFs and web pages, automatic summaries with suggested questions, scoped hybrid search, and grounded chat with
-> streaming answers, validated citations, provider fallback and a source viewer that highlights the cited passage.
-> A knowledge graph (entities and relations with their evidence passages) feeds a navigable wiki and expands the
-> chat context. Advanced research mode and administration (M5) are next.
-> See the [roadmap](docs/analysis/05-roadmap-and-decisions.md).
+> **Status: milestones M0–M5 complete** (foundations, ingestion, grounded chat, extended ingestion, knowledge
+> graph and wiki, administration and deep research). Runs today: the packaged stack; local and single sign-on
+> (OIDC) login; the hierarchy shared with users or groups, with on/off switches; nine model providers with a
+> per-project provider policy; model chains per phase (global and per project); indexing of documents, code,
+> archives, images, scanned PDFs and web pages; summaries; a knowledge graph with wiki pages; scoped hybrid search;
+> grounded chat and a deep research mode with validated citations; zero-downtime embedding model changes.
+> Production hardening and operations (M6) are next. See the [roadmap](docs/analysis/05-roadmap-and-decisions.md).
 
 ## Features
 
@@ -38,7 +36,10 @@ scope. Every claim cites its source (`[Source 1, p. 4]`), and clicking a citatio
 | Knowledge graph: entities and relations from documents (graph extraction model) and from code (symbols, imports, calls — no model) | ✅ M4 |
 | Wiki: entity pages written from the passages the reader can see, with citations; graph view; related entities | ✅ M4 |
 | Graph expansion of the chat context (neighbouring entities' passages, same access rules) | ✅ M4 |
-| Deep research mode, OIDC, per-project provider policy | M5 |
+| Groups (share with a group), single sign-on with OpenID Connect (Keycloak profile) and group sync, `reset-admin` command | ✅ M5 |
+| Per-project provider policy (e.g. "LAN only"), enforced on every model call | ✅ M5 |
+| Embedding model change with no search downtime (old index serves until the re-index completes, then atomic switch) | ✅ M5 |
+| Deep research mode: planned sub-questions, per-step retrieval, structured cited report | ✅ M5 |
 
 ## No models inside
 
