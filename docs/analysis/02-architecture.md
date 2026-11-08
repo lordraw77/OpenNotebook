@@ -136,6 +136,49 @@ upload / URL / note
 
 Each step is idempotent, retryable and versioned (`pipeline_version`, `embedding_model_id`) for selective re-indexing.
 
+### 3.1 Implementation status (M3)
+
+- **Detection** (`ingestion/parsers.py: sniff`): by content (magic bytes, ZIP directory, TAR header after
+  decompression, UTF-8 check), then by name for Markdown, HTML and code (`ingestion/languages.py`, plus shebangs).
+- **Code** (`ingestion/code.py`): tree-sitter grammars installed as individual MIT packages for C, C++, Python,
+  JavaScript, TypeScript/TSX, Java, Go, Rust, Bash, C#, PHP and Ruby. Blocks are the top-level definitions with
+  their doc comments, and large classes are split per member (`Class > method`). The document text is the
+  original file (verbatim mode), so chunk lines are file lines and the viewer shows the real file. Other
+  languages and configuration files (YAML, SQL, Kotlin, …) are split on blank lines. The chunker starts a new
+  chunk at a new symbol and labels a code chunk with its dominant symbol.
+- **Archives** (`ingestion/archives.py`): ZIP and TAR (optionally gz/bz2/xz). Extraction happens in memory
+  (nothing is written to disk) and every member becomes a child source (`parent_source_id`, original path
+  `x.zip!/src/a.c`).
+  - Limits: actual bytes read against `ARCHIVE_MAX_UNCOMPRESSED_MB` and `ARCHIVE_MAX_RATIO`, plus
+    `ARCHIVE_MAX_FILES`. Exceeding one rejects the whole archive, and blobs already stored are deleted.
+  - Unsafe names (absolute, drive letters, `..`), links, devices and encrypted entries are skipped and reported.
+  - Nested archives are expanded by their own job up to `ARCHIVE_MAX_DEPTH`. Images are skipped unless
+    `ARCHIVE_INDEX_IMAGES`, and content duplicates in the notebook are skipped.
+  - The archive itself is indexed as a manifest (files per directory, skipped files with reasons).
+  - Switching an archive on or off, or deleting it, applies to all its descendants. Re-indexing replaces them.
+- **Images** (`ingestion/images.py`): Pillow normalizes the image (first frame, EXIF orientation, RGB, longest
+  side `IMAGE_MAX_SIDE`) and rejects images above `IMAGE_MAX_PIXELS`. OCR uses the `ocr` chain: Mistral OCR via
+  `litellm.aocr`, or any vision model with a verbatim-transcription prompt; without an `ocr` chain, the `vision`
+  chain transcribes. The description comes from the `vision` chain. Both are indexed under "Text in the image"
+  and "Image description".
+- **Scanned PDF pages**: pages without a text layer are rendered with pypdfium2 and transcribed the same way
+  (up to `OCR_MAX_PAGES`). Their text is anchored to the page, with a whole-page box.
+- **Web** (`ingestion/web.py`), fetched by the worker:
+  - Requests: only http(s) and no credentials; every resolved address must be public (unless `WEB_ALLOW_PRIVATE`),
+    and the connected peer address is re-checked before the body is read. Redirects are followed manually and
+    re-validated; size and time are limited; environment proxies are ignored.
+  - Extraction: trafilatura extracts the main text as Markdown, and the page `<title>` becomes the source title.
+    The fetched bytes are stored as the snapshot (`original` blob). A URL that serves a PDF is parsed as a PDF.
+  - Deduplication is by URL within the notebook.
+  - Optional crawl: same host, depth ≤ `WEB_CRAWL_MAX_DEPTH`, page budget per root, robots.txt respected for
+    followed links.
+- **Summaries** (`ingestion/summary.py`): after a top-level document becomes `ready`, a `summary` job (own queue)
+  asks the `summary` chain for JSON `{summary, questions}` built from the first `SUMMARY_INPUT_CHARS`.
+  `summary_status` goes pending → done | failed | skipped (no model). The source stays searchable meanwhile, and a
+  failure never fails the source. Code, archives and archive or crawl children get no summary.
+- Not implemented: 7z and RAR, JavaScript rendering of web pages (Playwright), DOCX/PPTX → PDF conversion
+  (LibreOffice), images embedded inside PDF/DOCX, ClamAV.
+
 ## 4. Retrieval and grounded chat
 
 ```
@@ -220,8 +263,8 @@ backoff up to `INGESTION_MAX_ATTEMPTS`, parse errors fail immediately.
 | PDF | page + list of bboxes in PDF points, top-left origin (from pdfplumber) + page sizes | pdf.js (lazy-loaded, worker served from `/pdfjs/`, WASM disabled for the CSP) with rectangle overlay ✅ M2 |
 | DOCX/PPTX | converted to PDF (LibreOffice headless, in the worker image) at ingestion → as PDF | pdf.js |
 | Text / Markdown / note / web | character offsets on normalized text (`GET /api/sources/{id}/text`) | text viewer with `<mark>` ✅ M2 |
-| Code | start/end lines | code viewer with highlighted lines |
-| Image | OCR bboxes | overlay on the image |
+| Code | start/end lines; text = original file | monospace text viewer with the passage marked ✅ M3 |
+| Image | whole-image box (OCR providers return no word boxes) | image shown above its OCR text and description, passage marked ✅ M3 |
 
 ## 6. Frontend
 

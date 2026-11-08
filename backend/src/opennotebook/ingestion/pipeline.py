@@ -9,19 +9,34 @@ Error handling:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from opennotebook.config import get_settings
-from opennotebook.ingestion import PIPELINE_VERSION
+from opennotebook.ingestion import PIPELINE_VERSION, queue
+from opennotebook.ingestion.archives import ArchiveRejected, Limits, Member, iter_members
 from opennotebook.ingestion.chunker import chunk_document, embedding_text
-from opennotebook.ingestion.parsers import ParseError, UnsupportedContent, parse, sniff
+from opennotebook.ingestion.document import DocumentBuilder, ParsedDocument
+from opennotebook.ingestion.parsers import (
+    ParseError,
+    UnsupportedContent,
+    decode_text,
+    ensure_content,
+    parse,
+    parse_html,
+    parse_markdown,
+    parse_pdf,
+    parse_text,
+    sniff,
+)
 from opennotebook.ingestion.sparse import document_vector
 from opennotebook.ingestion.vectors import PointData, VectorIndex, collection_for
+from opennotebook.ingestion.web import TransientFetchError, fetch, robots_allows, same_host_links
 from opennotebook.models import (
     Chunk,
     IngestionJob,
@@ -84,13 +99,8 @@ async def ingest_source(
     job_id = job.id
 
     try:
-        raw = await store.get(blob_key(source.id, "original"))
-        fmt = (
-            sniff(raw, source.original_path or source.title).format
-            if source.kind != SourceKind.note
-            else "markdown"
-        )
-        doc = parse(raw, fmt, source.title)
+        gateway = ModelGateway(session)
+        doc = await _parse_source(session, source, store, gateway, project_id, job)
         text = doc.text
         await store.put(blob_key(source.id, "text"), text.encode(), "text/plain; charset=utf-8")
         await session.merge(
@@ -104,6 +114,8 @@ async def ingest_source(
         )
         source.page_count = doc.page_count
         source.warnings = doc.warnings
+        if doc.language:
+            source.language = doc.language
         source.metadata_ = {
             **(source.metadata_ or {}),
             "page_sizes": doc.page_sizes,
@@ -134,11 +146,10 @@ async def ingest_source(
         session.add_all(rows)
         await _set_status(session, source, SourceStatus.embedding)
 
-        gateway = ModelGateway(session)
         chain = await gateway.resolve(ModelPhase.embedding, project_id)
         model = chain[0].model
         collection = collection_for(model.id)
-        job.provider_model = chain[0].label
+        job.provider_model = ", ".join([*(job.provider_model or "").split(", "), chain[0].label]).strip(", ")
         vectors: list[list[float]] = []
         batch = max(1, settings.embed_batch_size)
         title = source.title
@@ -183,9 +194,28 @@ async def ingest_source(
         source.status = SourceStatus.ready
         job.status = "succeeded"
         job.finished_at = datetime.now(UTC)
+        from opennotebook.ingestion.summary import wants_summary
+
+        summarize = wants_summary(source)
+        if summarize:
+            source.summary_status = "pending"
         await session.commit()
+        if summarize:
+            queue.enqueue_summary(source.id)
         return SourceStatus.ready
 
+    except TransientFetchError as exc:
+        await session.rollback()
+        source = await session.get(Source, source_id)
+        job_row = await session.get(IngestionJob, job_id)
+        if source is not None:
+            source.error = {"code": "fetch_error", "message": str(exc)[:1000], "attempt": attempt}
+        if job_row is not None:
+            job_row.status = "failed"
+            job_row.error = str(exc)[:2000]
+            job_row.finished_at = datetime.now(UTC)
+        await session.commit()
+        raise RetryableError(str(exc)) from exc
     except (UnsupportedContent, ParseError) as exc:
         await _fail(session, source_id, job_id, "parse_error", str(exc))
         return SourceStatus.failed
@@ -266,3 +296,349 @@ async def refresh_ancestors(session: AsyncSession, node_id: uuid.UUID, *, index:
         if source.vector_collection:
             await index.set_ancestors(source.vector_collection, source.id, node_ids_from_path(notebook.path))
     return len(rows)
+
+
+# --- format dispatch ---------------------------------------------------------------------------------
+
+
+async def _parse_source(
+    session: AsyncSession,
+    source: Source,
+    store: BlobStore,
+    gateway: ModelGateway,
+    project_id: uuid.UUID,
+    job: IngestionJob,
+) -> ParsedDocument:
+    settings = get_settings()
+    if source.kind == SourceKind.web:
+        return await _parse_web(session, source, store)
+    raw = await store.get(blob_key(source.id, "original"))
+    if source.kind == SourceKind.note:
+        return parse(raw, "markdown", source.title)
+    sniffed = sniff(raw, source.original_path or source.title)
+    if sniffed.format in ("zip", "tar"):
+        return await _expand_archive(session, source, raw, sniffed.format, store)
+    if sniffed.format == "image":
+        from opennotebook.ingestion.images import parse_image
+
+        doc, used = await parse_image(raw, source.title, gateway, project_id)
+        job.provider_model = ", ".join(used)
+        return doc
+    if sniffed.format == "pdf":
+        first = _pdf_first_pass(raw, source.title)
+        if first.scanned_pages:
+            return await _pdf_with_ocr(raw, first, source.title, gateway, project_id, job)
+        return ensure_content(first)
+    if sniffed.format == "code":
+        from opennotebook.ingestion.code import parse_code
+
+        return parse_code(decode_text(raw), sniffed.language, source.title, settings.chunk_size_tokens)
+    return parse(raw, sniffed.format, source.title)
+
+
+def _pdf_first_pass(raw: bytes, title: str) -> ParsedDocument:
+    try:
+        return parse_pdf(raw, title, allow_empty=True)
+    except (UnsupportedContent, ParseError):
+        raise
+    except Exception as exc:  # noqa: BLE001 - library errors on malformed input
+        raise ParseError(f"Could not parse PDF: {exc.__class__.__name__}") from exc
+
+
+async def _pdf_with_ocr(
+    raw: bytes,
+    first: ParsedDocument,
+    title: str,
+    gateway: ModelGateway,
+    project_id: uuid.UUID,
+    job: IngestionJob,
+) -> ParsedDocument:
+    from opennotebook.ingestion.images import ocr_scanned_pages
+
+    texts, used, warnings = await ocr_scanned_pages(raw, first.scanned_pages, gateway, project_id)
+    job.provider_model = ", ".join(used) or None
+    doc = parse_pdf(raw, title, ocr_text=texts, allow_empty=True)
+    doc.warnings.extend(warnings)
+    return ensure_content(doc)
+
+
+# --- archives ----------------------------------------------------------------------------------------
+
+
+def _human(n: int) -> str:
+    return f"{n} B" if n < 1024 else f"{n / 1024:.1f} kB" if n < 1024 * 1024 else f"{n / 1048576:.1f} MB"
+
+
+async def _delete_children(session: AsyncSession, source: Source) -> None:
+    """Re-indexing an archive (or a crawl root) replaces its children."""
+    for child in await descendants(session, source.id):
+        child.deleted_at = datetime.now(UTC)
+        child.note_id = None
+    await session.commit()
+    for child in await descendants(session, source.id, include_deleted=True):
+        if child.deleted_at is not None and child.vector_collection:
+            queue.enqueue_purge(child.id)
+
+
+async def descendants(
+    session: AsyncSession, source_id: uuid.UUID, include_deleted: bool = False
+) -> list[Source]:
+    out: list[Source] = []
+    frontier = [source_id]
+    while frontier:
+        q = select(Source).where(Source.parent_source_id.in_(frontier))
+        if not include_deleted:
+            q = q.where(Source.deleted_at.is_(None))
+        children = list((await session.scalars(q)).all())
+        out.extend(children)
+        frontier = [c.id for c in children]
+    return out
+
+
+async def _expand_archive(
+    session: AsyncSession, source: Source, raw: bytes, fmt: str, store: BlobStore
+) -> ParsedDocument:
+    settings = get_settings()
+    depth = int((source.metadata_ or {}).get("archive_depth", 0))
+    await _delete_children(session, source)
+    limits = Limits(
+        max_total_bytes=settings.archive_max_uncompressed_mb * 1024 * 1024,
+        max_files=settings.archive_max_files,
+        max_ratio=settings.archive_max_ratio,
+        max_file_bytes=settings.upload_max_mb * 1024 * 1024,
+    )
+    existing = set(
+        (
+            await session.scalars(
+                select(Source.content_sha256).where(
+                    Source.notebook_id == source.notebook_id,
+                    Source.deleted_at.is_(None),
+                    Source.kind != SourceKind.note,
+                )
+            )
+        ).all()
+    )
+    prefix = source.original_path or source.title
+    created: list[Source] = []
+    stored_keys: list[str] = []
+    files: list[tuple[str, str, int]] = []  # path, label, size
+    skipped: list[dict] = []
+    total = 0
+    try:
+        for item in iter_members(raw, fmt, limits):
+            if not isinstance(item, Member):
+                skipped.append({"path": item.path, "reason": item.reason})
+                continue
+            total += len(item.data)
+            try:
+                sniffed = sniff(item.data, item.path)
+            except UnsupportedContent as exc:
+                skipped.append({"path": item.path, "reason": str(exc)[:200]})
+                continue
+            if sniffed.kind == "image" and not settings.archive_index_images:
+                skipped.append({"path": item.path, "reason": "image (ARCHIVE_INDEX_IMAGES is off)"})
+                continue
+            if sniffed.kind == "archive" and depth + 1 >= settings.archive_max_depth:
+                skipped.append({"path": item.path, "reason": "nested archive deeper than ARCHIVE_MAX_DEPTH"})
+                continue
+            digest = hashlib.sha256(item.data).digest()
+            if digest in existing:
+                skipped.append({"path": item.path, "reason": "duplicate of another source in the notebook"})
+                continue
+            existing.add(digest)
+            child = Source(
+                id=uuid.uuid4(),
+                notebook_id=source.notebook_id,
+                parent_source_id=source.id,
+                kind=SourceKind(sniffed.kind),
+                title=item.path[-500:],
+                original_path=f"{prefix}!/{item.path}",
+                mime_type=sniffed.mime_type,
+                language=sniffed.language,
+                content_sha256=digest,
+                size_bytes=len(item.data),
+                status=SourceStatus.queued,
+                created_by=source.created_by,
+                active=source.active,
+                warnings=[],
+                metadata_={"format": sniffed.format, "archive_depth": depth + 1},
+            )
+            key = blob_key(child.id, "original")
+            await store.put(key, item.data, sniffed.mime_type)
+            stored_keys.append(key)
+            created.append(child)
+            files.append((item.path, sniffed.language or sniffed.format, len(item.data)))
+    except ArchiveRejected:
+        for key in stored_keys:
+            await store.delete(key)
+        raise
+
+    for child in created:
+        session.add(child)
+        session.add(
+            SourceBlob(
+                source_id=child.id,
+                role="original",
+                object_key=blob_key(child.id, "original"),
+                size_bytes=child.size_bytes,
+                content_type=child.mime_type or "application/octet-stream",
+            )
+        )
+    source.metadata_ = {
+        **(source.metadata_ or {}),
+        "archive": {
+            "format": fmt,
+            "files": len(created),
+            "skipped_count": len(skipped),
+            "skipped": skipped[:500],
+            "uncompressed_bytes": total,
+            "depth": depth,
+        },
+    }
+    await session.commit()
+    for child in created:
+        queue.enqueue_ingestion(child.id, "archive")
+
+    # The archive itself is indexed as its manifest, so "which files are in X" can be answered.
+    b = DocumentBuilder(source.title)
+    b.heading(f"Contents of {source.title}", 1)
+    b.block(
+        f"{len(created)} files indexed, {len(skipped)} skipped, "
+        f"{_human(total)} uncompressed ({fmt.upper()}).",
+        "paragraph",
+    )
+    by_dir: dict[str, list[str]] = {}
+    for path, label, size in files:
+        directory = path.rsplit("/", 1)[0] if "/" in path else "."
+        by_dir.setdefault(directory, []).append(f"{path} ({label}, {_human(size)})")
+    for directory, lines in sorted(by_dir.items()):
+        b.heading(f"Directory {directory}", 2)
+        for i in range(0, len(lines), 40):
+            b.block("\n".join(lines[i : i + 40]), "list")
+    if skipped:
+        b.heading("Skipped files", 2)
+        lines = [f"{s['path']}: {s['reason']}" for s in skipped[:500]]
+        for i in range(0, len(lines), 40):
+            b.block("\n".join(lines[i : i + 40]), "list")
+    return b.build()
+
+
+# --- web pages ---------------------------------------------------------------------------------------
+
+
+def web_digest(url: str) -> bytes:
+    """Web sources are deduplicated by URL within a notebook."""
+    return hashlib.sha256(f"url:{url}".encode()).digest()
+
+
+async def _parse_web(session: AsyncSession, source: Source, store: BlobStore) -> ParsedDocument:
+    if not source.uri:
+        raise ParseError("Web source without URL")
+    fetched = await fetch(source.uri)
+    content_type = fetched.content_type or "text/html"
+    key = blob_key(source.id, "original")
+    await store.put(key, fetched.data, content_type)
+    await session.merge(
+        SourceBlob(
+            source_id=source.id,
+            role="original",
+            object_key=key,
+            size_bytes=len(fetched.data),
+            content_type=content_type,
+        )
+    )
+    meta = dict(source.metadata_ or {})
+    meta.update(
+        {
+            "final_url": fetched.url,
+            "content_type": content_type,
+            "fetched_at": datetime.now(UTC).isoformat(),
+            "content_sha256": hashlib.sha256(fetched.data).hexdigest(),
+        }
+    )
+    if content_type == "application/pdf" or fetched.data.startswith(b"%PDF-"):
+        source.mime_type = "application/pdf"
+        doc = parse_pdf(fetched.data, source.title)
+    else:
+        text = decode_text(fetched.data) if _is_utf8(fetched.data) else fetched.data.decode("latin-1")
+        if content_type in ("text/html", "application/xhtml+xml") or text.lstrip()[:15].lower().startswith(
+            ("<!doctype", "<html")
+        ):
+            source.mime_type = "text/html"
+            doc = parse_html(text, source.title)
+            await _crawl(session, source, text, fetched.url, meta)
+        elif content_type == "text/markdown":
+            source.mime_type = "text/markdown"
+            doc = parse_markdown(text, source.title)
+        else:
+            source.mime_type = "text/plain"
+            doc = parse_text(text, source.title)
+    if source.title == source.uri and doc.title and doc.title != source.title:
+        source.title = doc.title[:500]
+    source.size_bytes = len(fetched.data)
+    source.metadata_ = meta
+    return doc
+
+
+def _is_utf8(data: bytes) -> bool:
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
+async def _crawl(session: AsyncSession, source: Source, html: str, base_url: str, meta: dict) -> None:
+    """Bounded crawl: same host, depth and page budget stored on the root page, robots.txt respected."""
+    crawl = meta.get("crawl") or {}
+    depth_left = int(crawl.get("depth_left", 0))
+    if depth_left <= 0:
+        return
+    root_id = crawl.get("root", str(source.id))
+    max_pages = int(crawl.get("max_pages", get_settings().web_crawl_max_pages))
+    already = await session.scalar(
+        select(func.count(Source.id)).where(
+            Source.notebook_id == source.notebook_id,
+            Source.metadata_["crawl"]["root"].astext == root_id,
+            Source.id != uuid.UUID(root_id),
+        )
+    )
+    budget = max_pages - int(already or 0)
+    created: list[Source] = []
+    for url in same_host_links(html, base_url):
+        if budget <= 0:
+            break
+        digest = web_digest(url)
+        exists = await session.scalar(
+            select(Source.id).where(
+                Source.notebook_id == source.notebook_id,
+                Source.content_sha256 == digest,
+                Source.deleted_at.is_(None),
+            )
+        )
+        if exists or not await robots_allows(url):
+            continue
+        child = Source(
+            id=uuid.uuid4(),
+            notebook_id=source.notebook_id,
+            parent_source_id=source.id,
+            kind=SourceKind.web,
+            title=url[:500],
+            original_path=url,
+            uri=url,
+            mime_type="text/html",
+            content_sha256=digest,
+            size_bytes=0,
+            status=SourceStatus.queued,
+            created_by=source.created_by,
+            active=source.active,
+            warnings=[],
+            metadata_={"crawl": {"root": root_id, "depth_left": depth_left - 1, "max_pages": max_pages}},
+        )
+        session.add(child)
+        created.append(child)
+        budget -= 1
+    meta["crawl"] = {**crawl, "root": root_id, "links_followed": len(created)}
+    await session.commit()  # children must exist before their jobs run
+    for child in created:
+        queue.enqueue_ingestion(child.id, "crawl")

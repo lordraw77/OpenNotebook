@@ -34,6 +34,34 @@ class Settings(BaseSettings):
     # Interactive calls (search, chat) must not wait for slow providers as long as background jobs do
     search_timeout_s: int = 30
 
+    # Archives (zip, tar, tar.gz, tar.bz2, tar.xz)
+    archive_max_uncompressed_mb: int = 2048
+    archive_max_files: int = 20000
+    archive_max_depth: int = 3
+    archive_max_ratio: int = 100
+    # images inside archives cost an OCR and a vision call each: off by default
+    archive_index_images: bool = False
+
+    # Images and scanned PDF pages
+    image_max_pixels: int = 50_000_000
+    # longest side sent to OCR / vision providers
+    image_max_side: int = 2048
+    ocr_max_pages: int = 50
+
+    # Web pages
+    web_max_mb: int = 20
+    web_timeout_s: int = 30
+    web_max_redirects: int = 5
+    # allow private, loopback and link-local addresses (intranet sites); off = SSRF protection
+    web_allow_private: bool = False
+    web_crawl_max_depth: int = 2
+    web_crawl_max_pages: int = 50
+    web_user_agent: str = "OpenNotebook/0.3 (self-hosted knowledge workspace)"
+
+    # Summaries and suggested questions
+    summary_enabled: bool = True
+    summary_input_chars: int = 12000
+
     # Grounded chat
     # passages retrieved by hybrid search before rerank / diversification
     chat_candidates: int = 40

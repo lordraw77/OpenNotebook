@@ -33,9 +33,17 @@ class ParsedDocument:
     page_count: int | None = None
     page_sizes: list[dict] = field(default_factory=list)  # [{page, width, height}]
     warnings: list[str] = field(default_factory=list)
+    # Verbatim mode (source code): blocks are spans of the original text, so offsets and line numbers
+    # refer to the original file.
+    raw_text: str | None = None
+    # PDF pages without a text layer (candidates for OCR)
+    scanned_pages: list[int] = field(default_factory=list)
+    language: str | None = None
 
     @property
     def text(self) -> str:
+        if self.raw_text is not None:
+            return self.raw_text
         return BLOCK_SEPARATOR.join(b.text for b in self.blocks)
 
 

@@ -29,6 +29,19 @@ from opennotebook.providers.catalog import PROVIDERS, SINGLE_MODEL_PHASES, suppo
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 
+TRANSCRIBE_PROMPT = (
+    "Transcribe all the text visible in this image exactly, in reading order, as Markdown "
+    "(keep headings, lists and tables). Do not describe the image and do not add anything. "
+    "If the image contains no text, reply exactly: NO TEXT"
+)
+DESCRIBE_PROMPT = (
+    "Describe this image for a search index in 3 to 8 sentences: what kind of image it is (photo, diagram, "
+    "screenshot, chart, drawing, ...), what it shows, the important objects, labels, numbers and how they "
+    "relate. Do not invent details that are not visible. Write in the language of the text in the image, "
+    "or in English if there is no text."
+)
+
+
 class GatewayError(Exception):
     def __init__(self, message: str, attempts: list[dict] | None = None) -> None:
         super().__init__(message)
@@ -217,6 +230,77 @@ class ModelGateway:
                 **_capped(litellm_kwargs(r), timeout_s),
             )
             return [d["embedding"] for d in resp.data]
+
+        return await self._run(chain, call)
+
+    async def has_chain(self, phase: ModelPhase, project_id: uuid.UUID | None = None) -> bool:
+        try:
+            await self.resolve(phase, project_id)
+        except GatewayError:
+            return False
+        return True
+
+    async def transcribe_image(
+        self, image_data_uri: str, project_id: uuid.UUID | None = None, phase: ModelPhase = ModelPhase.ocr
+    ) -> CallResult:
+        """Text in an image as Markdown: an OCR model (Mistral OCR) or a vision model prompted to transcribe.
+
+        `phase` is `ocr` normally, `vision` when no OCR chain is configured.
+        """
+        import litellm
+
+        chain = await self.resolve(phase, project_id)
+
+        async def call(r: ResolvedModel) -> str:
+            if ModelPhase.ocr in set(r.model.capabilities) and r.provider.kind == ProviderKind.mistral:
+                resp = await litellm.aocr(
+                    model=f"mistral/{r.model.model}",
+                    document={"type": "image_url", "image_url": image_data_uri},
+                    **litellm_kwargs(r),
+                )
+                return "\n\n".join((p.markdown or "") for p in resp.pages).strip()
+            resp = await litellm.acompletion(
+                model=litellm_model_name(r.provider.kind, r.model.model, ModelPhase.vision),
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": TRANSCRIBE_PROMPT},
+                            {"type": "image_url", "image_url": {"url": image_data_uri}},
+                        ],
+                    }
+                ],
+                max_tokens=4096,
+                **{**r.params},
+                **litellm_kwargs(r),
+            )
+            text = (resp.choices[0].message.content or "").strip()
+            return "" if text.upper().strip(" .") == "NO TEXT" else text
+
+        return await self._run(chain, call)
+
+    async def describe_image(self, image_data_uri: str, project_id: uuid.UUID | None = None) -> CallResult:
+        import litellm
+
+        chain = await self.resolve(ModelPhase.vision, project_id)
+
+        async def call(r: ResolvedModel) -> str:
+            resp = await litellm.acompletion(
+                model=litellm_model_name(r.provider.kind, r.model.model, ModelPhase.vision),
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": DESCRIBE_PROMPT},
+                            {"type": "image_url", "image_url": {"url": image_data_uri}},
+                        ],
+                    }
+                ],
+                max_tokens=1024,
+                **{**r.params},
+                **litellm_kwargs(r),
+            )
+            return (resp.choices[0].message.content or "").strip()
 
         return await self._run(chain, call)
 

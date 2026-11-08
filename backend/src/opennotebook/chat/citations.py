@@ -12,7 +12,10 @@ from dataclasses import dataclass, field
 # [S1]  [S1, S3]  [S1; S2]  [s2]  — also tolerates "Source 1" written inside brackets.
 _GROUP = re.compile(r"(\s*)\[((?:\s*(?:S|Source\s*)\d+\s*[,;]?)+)\]", re.IGNORECASE)
 _NUMBER = re.compile(r"\d+")
-_SENTENCE = re.compile(r"[^.!?\n]+[.!?]?")
+# a sentence ends at . ! ? followed by whitespace (so "4.2.1", "v1.2" and "file.py" do not split it)
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+_INLINE_CODE = re.compile(r"`[^`]*`")
+_ABBREVIATIONS = re.compile(r"\b(e\.g|i\.e|etc|vs|cf|p|pp|ca|approx|es|ecc)\.", re.IGNORECASE)
 # "...the device. [S1]" — a marker right after the full stop belongs to the sentence before it
 _TRAILING_MARKERS = re.compile(r"([.!?])((?:\s*\[S\d+\])+)")
 
@@ -69,7 +72,11 @@ def count_uncited(content: str) -> int:
         if in_code or not stripped or stripped.startswith("#"):
             continue
         stripped = _TRAILING_MARKERS.sub(r"\2\1", stripped)
-        for sentence in _SENTENCE.findall(stripped):
+        stripped = _ABBREVIATIONS.sub(lambda m: m.group(1), _INLINE_CODE.sub("code", stripped))
+        for sentence in _SENTENCE_SPLIT.split(stripped):
+            sentence = sentence.strip()
+            if sentence.endswith(":"):  # lead-in to a list, not a claim
+                continue
             words = sentence.strip(" -*>").split()
             if len(words) >= 6 and "[S" not in sentence:
                 count += 1

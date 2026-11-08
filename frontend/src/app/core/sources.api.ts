@@ -23,6 +23,27 @@ export interface SourceDto {
   page_count: number | null;
   embedding_model_id: string | null;
   note_id: string | null;
+  parent_source_id: string | null;
+  uri: string | null;
+  language: string | null;
+  summary: string | null;
+  suggested_questions: string[];
+  summary_status: 'pending' | 'done' | 'failed' | 'skipped' | null;
+  summary_error: string | null;
+  details: {
+    archive?: {
+      format: string;
+      files: number;
+      skipped_count: number;
+      skipped: { path: string; reason: string }[];
+      uncompressed_bytes: number;
+      depth: number;
+    };
+    final_url?: string;
+    content_type?: string;
+    fetched_at?: string;
+    crawl?: { root: string; depth_left: number; max_pages: number; links_followed?: number };
+  };
   created_at: string;
   indexed_at: string | null;
 }
@@ -226,6 +247,22 @@ export class SourcesApi {
     a.download = source.title;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  /** Adds web pages by URL (fetched and indexed by the worker); optional same-site crawl. */
+  addWeb(
+    notebookId: string,
+    urls: string[],
+    crawlDepth = 0,
+    maxPages: number | null = null,
+  ): Promise<UploadResult[]> {
+    return firstValueFrom(
+      this.http.post<UploadResult[]>(`/api/nodes/${notebookId}/web`, {
+        urls,
+        crawl_depth: crawlDepth,
+        max_pages: maxPages,
+      }),
+    );
   }
 
   search(

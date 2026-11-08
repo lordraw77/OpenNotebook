@@ -92,6 +92,16 @@ def chunk_document(doc: ParsedDocument, size: int = 512, overlap: int = 64) -> l
                 break
             if j > i and u.block.block_type == "heading" and tokens >= size // 4:
                 break
+            # source code: a new symbol starts a new chunk once the current one is substantial
+            if (
+                j > i
+                and u.block.block_type == "code"
+                and u.block.heading_path
+                and u.block is not units[j - 1].block
+                and u.block.heading_path != units[j - 1].block.heading_path
+                and tokens >= size // 4
+            ):
+                break
             tokens += u.tokens
             j += 1
         selected = units[i:j]
@@ -126,7 +136,7 @@ def _make_chunk(ordinal: int, text: str, units: list[_Unit]) -> ChunkData:
         char_start=start,
         char_end=end,
         token_count=estimate_tokens(text[start:end]),
-        heading_path=list(content[0].heading_path),
+        heading_path=list(_main_block(units, content).heading_path),
         page_start=min(pages) if pages else None,
         page_end=max(pages) if pages else None,
         line_start=first_line,
@@ -134,6 +144,16 @@ def _make_chunk(ordinal: int, text: str, units: list[_Unit]) -> ChunkData:
         bboxes=bboxes,
         block_type=types.pop() if len(types) == 1 else "mixed",
     )
+
+
+def _main_block(units: list[_Unit], content: list[Block]) -> Block:
+    """Prose: the first content block. Code: the block (symbol) contributing most tokens."""
+    if any(b.block_type != "code" for b in content):
+        return content[0]
+    weight: dict[int, int] = {}
+    for u in units:
+        weight[id(u.block)] = weight.get(id(u.block), 0) + u.tokens
+    return max(content, key=lambda b: (weight.get(id(b), 0), bool(b.heading_path)))
 
 
 def embedding_text(title: str, chunk: ChunkData) -> str:

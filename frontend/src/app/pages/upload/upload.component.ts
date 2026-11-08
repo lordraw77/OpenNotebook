@@ -4,6 +4,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
+import { MatInputModule } from '@angular/material/input';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatSelectModule } from '@angular/material/select';
 import { MatTableModule } from '@angular/material/table';
@@ -12,9 +13,10 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { TreeNodeDto } from '../../core/api.models';
 import { ApiService, errorMessage } from '../../core/api.service';
 import { SourceDto, SourcesApi, TERMINAL, UploadResult, formatBytes } from '../../core/sources.api';
-import { breadcrumb, hasRole } from '../workbench/tree';
+import { SOURCE_ICONS, breadcrumb, hasRole } from '../workbench/tree';
 
-const ACCEPT = '.pdf,.docx,.md,.markdown,.txt,text/plain,application/pdf';
+// Any file can be dropped: the type is detected from the content on the server.
+const ACCEPT = '';
 
 @Component({
   selector: 'app-upload',
@@ -23,6 +25,7 @@ const ACCEPT = '.pdf,.docx,.md,.markdown,.txt,text/plain,application/pdf';
     MatCardModule,
     MatFormFieldModule,
     MatSelectModule,
+    MatInputModule,
     MatIconModule,
     MatButtonModule,
     MatProgressBarModule,
@@ -53,13 +56,66 @@ const ACCEPT = '.pdf,.docx,.md,.markdown,.txt,text/plain,application/pdf';
         (drop)="onDrop($event)"
       >
         <mat-icon>cloud_upload</mat-icon>
-        <p>Drop PDF, DOCX, Markdown or text files here</p>
+        <p>Drop documents, source code, images or archives here</p>
         <button mat-flat-button [disabled]="!target() || uploading()" (click)="picker.click()">
           Choose files
         </button>
         <input #picker type="file" multiple hidden [accept]="accept" (change)="onPick(picker)" />
         <p class="muted small">
-          Archives, source code structure, images and web pages arrive in milestone M3.
+          PDF (scanned pages via OCR), DOCX, Markdown, text, HTML · code (C, C++, Python, JS/TS,
+          Java, Go, Rust, C#, PHP, Ruby, shell and more) · PNG, JPEG, WebP, TIFF, GIF (OCR +
+          description) · ZIP and TAR archives (each file becomes a source)
+        </p>
+      </mat-card>
+
+      <mat-card appearance="outlined" class="web" [class.disabled]="!target()">
+        <h2 class="section-inline"><mat-icon>language</mat-icon> Add web pages</h2>
+        <mat-form-field appearance="outline" subscriptSizing="dynamic">
+          <mat-label>URLs (one per line)</mat-label>
+          <textarea
+            matInput
+            rows="3"
+            [value]="urls()"
+            (input)="urls.set($any($event.target).value)"
+            [disabled]="!target()"
+            placeholder="https://example.com/docs/"
+          ></textarea>
+        </mat-form-field>
+        <div class="web-row">
+          <mat-form-field appearance="outline" subscriptSizing="dynamic" class="narrow">
+            <mat-label>Follow links</mat-label>
+            <mat-select [value]="crawlDepth()" (valueChange)="crawlDepth.set($event)">
+              <mat-option [value]="0">No, only these pages</mat-option>
+              <mat-option [value]="1">1 level, same site</mat-option>
+              <mat-option [value]="2">2 levels, same site</mat-option>
+            </mat-select>
+          </mat-form-field>
+          @if (crawlDepth() > 0) {
+            <mat-form-field appearance="outline" subscriptSizing="dynamic" class="narrow">
+              <mat-label>Max pages</mat-label>
+              <input
+                matInput
+                type="number"
+                min="1"
+                max="50"
+                [value]="maxPages()"
+                (input)="maxPages.set(+$any($event.target).value || 20)"
+              />
+            </mat-form-field>
+          }
+          <span class="spacer"></span>
+          <button
+            mat-flat-button
+            [disabled]="!target() || !urlList().length || adding()"
+            (click)="addWeb()"
+          >
+            <mat-icon>add_link</mat-icon> Add {{ urlList().length || '' }}
+            {{ urlList().length === 1 ? 'page' : 'pages' }}
+          </button>
+        </div>
+        <p class="muted small">
+          Pages are fetched by the server: main text only (menus and footers removed), robots.txt is
+          respected when following links, and private network addresses are refused.
         </p>
       </mat-card>
 
@@ -93,7 +149,12 @@ const ACCEPT = '.pdf,.docx,.md,.markdown,.txt,text/plain,application/pdf';
           <table mat-table [dataSource]="sources()">
             <ng-container matColumnDef="title">
               <th mat-header-cell *matHeaderCellDef>Source</th>
-              <td mat-cell *matCellDef="let s">{{ s.title }}</td>
+              <td mat-cell *matCellDef="let s">
+                <span class="kind"
+                  ><mat-icon>{{ icons[s.kind] ?? 'description' }}</mat-icon>
+                  {{ s.parent_source_id ? '↳ ' : '' }}{{ s.title }}</span
+                >
+              </td>
             </ng-container>
             <ng-container matColumnDef="size">
               <th mat-header-cell *matHeaderCellDef>Size</th>
@@ -155,6 +216,48 @@ const ACCEPT = '.pdf,.docx,.md,.markdown,.txt,text/plain,application/pdf';
     .small {
       font-size: 12px;
       margin: 0;
+    }
+    .web {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 16px;
+      margin-top: 16px;
+    }
+    .web.disabled {
+      opacity: 0.6;
+    }
+    .section-inline {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font: var(--mat-sys-title-medium);
+      margin: 0;
+    }
+    .web-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .narrow {
+      width: 200px;
+    }
+    .spacer {
+      flex: 1;
+    }
+    .kind {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      overflow-wrap: anywhere;
+    }
+    .kind mat-icon {
+      font-size: 18px;
+      width: 18px;
+      height: 18px;
+      color: var(--mat-sys-primary);
+      flex: none;
     }
     .results {
       list-style: none;
@@ -226,6 +329,17 @@ export class UploadComponent {
   readonly dragOver = signal(false);
   readonly columns = ['title', 'size', 'status', 'chunks', 'added'];
   protected readonly accept = ACCEPT;
+  protected readonly icons = SOURCE_ICONS;
+  readonly urls = signal('');
+  readonly urlList = computed(() =>
+    this.urls()
+      .split(/\s+/)
+      .map((u) => u.trim())
+      .filter((u) => u.length > 0),
+  );
+  readonly crawlDepth = signal(0);
+  readonly maxPages = signal(20);
+  readonly adding = signal(false);
   protected readonly size = formatBytes;
 
   constructor() {
@@ -250,6 +364,28 @@ export class UploadComponent {
     return breadcrumb(this.all(), n.id)
       .map((x) => x.name)
       .join(' / ');
+  }
+
+  async addWeb(): Promise<void> {
+    const target = this.target();
+    if (!target) return;
+    this.adding.set(true);
+    this.error.set(null);
+    try {
+      const res = await this.sourcesApi.addWeb(
+        target,
+        this.urlList().slice(0, 20),
+        this.crawlDepth(),
+        this.crawlDepth() ? this.maxPages() : null,
+      );
+      this.results.set(res);
+      if (res.every((r) => !r.error)) this.urls.set('');
+      await this.loadSources(target);
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      this.adding.set(false);
+    }
   }
 
   private async loadSources(notebookId: string | null): Promise<void> {

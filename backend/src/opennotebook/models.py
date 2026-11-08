@@ -321,6 +321,13 @@ class Source(TimestampMixin, Base):
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Summary and suggested questions, generated after indexing (the source is usable meanwhile).
+    # summary_status: pending | done | failed | skipped (NULL = not applicable, e.g. archive members)
+    summary: Mapped[str | None] = mapped_column(Text)
+    suggested_questions: Mapped[list] = mapped_column(JSONB, default=list)
+    summary_status: Mapped[str | None] = mapped_column(String(20))
+    summary_model: Mapped[str | None] = mapped_column(String(400))
+    summary_error: Mapped[str | None] = mapped_column(Text)
 
 
 class SourceBlob(Base):

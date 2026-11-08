@@ -75,6 +75,7 @@ def jobs(monkeypatch):
     monkeypatch.setattr(
         queue, "enqueue_refresh_ancestors", lambda nid: recorded.append(("refresh", str(nid), ""))
     )
+    monkeypatch.setattr(queue, "enqueue_summary", lambda sid: recorded.append(("summary", str(sid), "")))
     return recorded
 
 
@@ -90,6 +91,10 @@ async def run_jobs(session, jobs) -> list:
             )
         elif kind == "purge":
             await purge_source(session, uuid.UUID(ident), store=store, index=index)
+        elif kind == "summary":
+            from opennotebook.ingestion.summary import summarize_source
+
+            await summarize_source(session, uuid.UUID(ident))
         else:
             await refresh_ancestors(session, uuid.UUID(ident), index=index)
         session.expire_all()
@@ -188,9 +193,12 @@ async def test_upload_ingest_chunks_and_file(client, admin_headers, session, wor
 
     # duplicates, unsupported types and wrong targets
     again = await upload(
-        client, admin_headers, world.driver["id"], [("copy.md", RADIO_MD), ("pic.png", b"\x89PNG....")]
+        client,
+        admin_headers,
+        world.driver["id"],
+        [("copy.md", RADIO_MD), ("pack.7z", b"7z\xbc\xaf\x27\x1c" + bytes(26))],
     )
-    assert again[0]["duplicate"] is True and again[1]["error"].startswith("PNG images")
+    assert again[0]["duplicate"] is True and again[1]["error"].startswith("7z archives")
     assert jobs == []
     r = await client.post(
         f"/api/nodes/{world.src['id']}/sources",

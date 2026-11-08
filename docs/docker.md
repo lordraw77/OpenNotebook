@@ -19,8 +19,8 @@ All OpenNotebook images share the release version (`VERSION` file / `VERSION` va
 | Image | Built from | Purpose | Size (M0) |
 |---|---|---|---|
 | `opennotebook/web` | `frontend/` | Angular SPA served by unprivileged nginx; proxies `/api` to the api service (unbuffered, for the chat event stream); security headers; serves the pdf.js worker from `/pdfjs/` | ~70 MB |
-| `opennotebook/api` | `backend/` (target `api`) | FastAPI REST + SSE API; also runs the `migrate` one-shot job | ~520 MB |
-| `opennotebook/worker` | `backend/` (target `worker`) | Celery ingestion worker (LibreOffice, tree-sitter, Playwright are added in M1/M3) | ~520 MB |
+| `opennotebook/api` | `backend/` (target `api`) | FastAPI REST + SSE API; also runs the `migrate` one-shot job | ~735 MB |
+| `opennotebook/worker` | `backend/` (target `worker`) | Celery ingestion worker: parsing (pdfplumber, python-docx, tree-sitter grammars, trafilatura, Pillow, pypdfium2), archive expansion, web fetching, summaries | ~735 MB |
 
 Third-party images: `postgres:18.6-alpine`, `qdrant/qdrant:v1.20.0`, `chrislusf/seaweedfs:4.52`, `redis:8.8.4-alpine`,
 and in profiles `quay.io/keycloak/keycloak:26.8.1`, `prom/prometheus:v3.15.1`, `grafana/grafana:13.2.5`.
@@ -118,6 +118,11 @@ registry at first start; afterwards manage them in **Settings → Providers**.
 External Ollama: set `OLLAMA_API_BASE=http://<host>:11434`; the host must be reachable from the `egress` network.
 For a slow CPU-only server raise `OLLAMA_TIMEOUT_S`.
 
+Ingestion limits: `ARCHIVE_*` (size, files, ratio, depth; images inside archives are skipped unless
+`ARCHIVE_INDEX_IMAGES=true`), `IMAGE_*` and `OCR_MAX_PAGES`, `WEB_*` (size, time, redirects, crawl limits).
+The worker fetches web pages itself, from the `egress` network: private, loopback and link-local addresses are
+refused unless `WEB_ALLOW_PRIVATE=true` (needed only to index intranet sites).
+
 Chat tuning (`CHAT_*`, `RERANK_TIMEOUT_S`): how many passages are retrieved and given to the model, the history
 length, the answer length and the interactive timeouts; defaults are in `.env.example`.
 
@@ -175,4 +180,8 @@ tar xzf opennotebook-<version>-bundle.tar.gz && cd opennotebook-<version>
 | Chat waits a long time before answering | a slow chat model (e.g. CPU-only Ollama) gets `CHAT_FIRST_TOKEN_TIMEOUT_S` to start; lower it to fall back sooner |
 | PDF viewer stays empty, console reports a module MIME type error | the `/pdfjs/` location of `frontend/nginx.conf` (serves `.mjs` as JavaScript) is missing from a custom nginx config |
 | Sources stay in `embedding`, search returns 503 "Timeout" | the embedding provider is slow or saturated (e.g. a CPU-only Ollama also serving chat models); check **RAG Status → Recent jobs**, or assign a faster embedding model globally or per project and re-index |
+| Image source fails with "Images need an OCR or a vision model" | assign an `ocr` model (e.g. Mistral OCR) or a `vision` model in Settings → Models, globally or for the project, then re-index |
+| Images are slow to index | each image costs an OCR and a vision call; a CPU-only Ollama vision model takes minutes per image — use a cloud vision model for the project |
+| Web page fails with "Address … is not allowed" | the host resolves to a private or reserved address (SSRF protection); set `WEB_ALLOW_PRIVATE=true` only if intranet sites must be indexed |
+| Archive fails with "compression ratio" / "uncompressed" | a safety limit was hit (`ARCHIVE_MAX_RATIO`, `ARCHIVE_MAX_UNCOMPRESSED_MB`, `ARCHIVE_MAX_FILES`); raise it only for trusted archives |
 | Unexpected profile services start | inline comment in `.env` on `COMPOSE_PROFILES` (see Configuration) |

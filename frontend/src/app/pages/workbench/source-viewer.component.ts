@@ -1,5 +1,6 @@
 import {
   Component,
+  DestroyRef,
   ElementRef,
   computed,
   effect,
@@ -120,7 +121,14 @@ async function loadPdfJs() {
           }
         </div>
       } @else if (text() !== null) {
-        <pre class="text">{{ before() }}<mark #mark>{{ marked() }}</mark>{{ after() }}</pre>
+        @if (imageUrl()) {
+          <img class="image" [src]="imageUrl()" [alt]="c.source_title" />
+        }
+        <pre
+          class="text"
+          [class.code]="
+            c.source_kind === 'code'
+          ">{{ before() }}<mark #mark>{{ marked() }}</mark>{{ after() }}</pre>
       }
     </div>
   `,
@@ -188,11 +196,29 @@ async function loadPdfJs() {
       margin: 0 auto;
       max-width: 860px;
     }
+    .text.code {
+      font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.5;
+      white-space: pre;
+      overflow-x: auto;
+      max-width: none;
+    }
+    .image {
+      display: block;
+      max-width: 100%;
+      max-height: 50vh;
+      margin: 0 auto 16px;
+      border-radius: 8px;
+      box-shadow: 0 2px 12px rgb(0 0 0 / 25%);
+    }
     mark {
-      background: color-mix(in srgb, var(--mat-sys-tertiary) 30%, transparent);
+      background: color-mix(in srgb, var(--mat-sys-tertiary) 26%, transparent);
       color: inherit;
-      outline: 2px solid var(--mat-sys-tertiary);
-      border-radius: 3px;
+      border-radius: 2px;
+      box-shadow: -3px 0 0 var(--mat-sys-tertiary);
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
     }
     .pad {
       padding: 0 16px;
@@ -227,8 +253,9 @@ export class SourceViewerComponent {
   readonly pageSize = signal({ width: 0, height: 0 });
   readonly boxes = signal<Box[]>([]);
 
-  // text state
+  // text state (images: the picture is shown above its OCR text and description)
   readonly text = signal<string | null>(null);
+  readonly imageUrl = signal<string | null>(null);
   readonly before = computed(() => (this.text() ?? '').slice(0, this.citation().char_start));
   readonly marked = computed(() =>
     (this.text() ?? '').slice(this.citation().char_start, this.citation().char_end),
@@ -237,6 +264,7 @@ export class SourceViewerComponent {
 
   constructor() {
     // A new citation: load its source and jump to the cited page.
+    inject(DestroyRef).onDestroy(() => this.setImage(null));
     effect(() => {
       const c = this.citation();
       untracked(() => {
@@ -267,6 +295,11 @@ export class SourceViewerComponent {
           await this.renderPage(this.page());
         }
       } else {
+        this.setImage(null);
+        if (c.mime_type?.startsWith('image/')) {
+          const bytes = await this.api.fileBytes(c.source_id);
+          this.setImage(URL.createObjectURL(new Blob([bytes], { type: c.mime_type })));
+        }
         this.text.set(await this.api.text(c.source_id));
         setTimeout(() => this.markEl()?.nativeElement.scrollIntoView({ block: 'center' }));
       }
@@ -275,6 +308,12 @@ export class SourceViewerComponent {
     } finally {
       this.loading.set(false);
     }
+  }
+
+  private setImage(url: string | null): void {
+    const old = this.imageUrl();
+    if (old) URL.revokeObjectURL(old);
+    this.imageUrl.set(url);
   }
 
   private async renderPage(pageNumber: number): Promise<void> {

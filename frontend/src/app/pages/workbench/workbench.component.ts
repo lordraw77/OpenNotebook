@@ -86,6 +86,7 @@ export class WorkbenchComponent {
   );
   readonly notesRefresh = signal(0);
   readonly mode = signal<'chat' | 'search'>('chat');
+  readonly askRequest = signal<{ text: string; nonce: number } | null>(null);
   /** Cited passage open in the source viewer. */
   readonly viewing = signal<Citation | null>(null);
   /** Notebooks inside the scope where the user can save chat answers as notes. */
@@ -174,6 +175,20 @@ export class WorkbenchComponent {
     this.selectedId.set(node.id);
     this.selectedSourceId.set(null);
     this.viewing.set(null);
+  }
+
+  /** Members of an archive show their file name; the full path is in the tooltip. */
+  shortTitle(src: SourceDto): string {
+    return src.parent_source_id && src.kind !== 'web' ? src.title.split('/').pop()! : src.title;
+  }
+
+  /** A suggested question of a source: chat about it in the source's notebook. */
+  askAbout(src: SourceDto, question: string): void {
+    this.selectedSourceId.set(null);
+    this.viewing.set(null);
+    this.selectedId.set(src.notebook_id);
+    this.mode.set('chat');
+    this.askRequest.set({ text: question, nonce: Date.now() });
   }
 
   openCitation(c: Citation): void {

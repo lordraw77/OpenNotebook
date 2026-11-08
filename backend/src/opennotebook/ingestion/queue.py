@@ -21,3 +21,7 @@ def enqueue_purge(source_id: uuid.UUID) -> None:
 
 def enqueue_refresh_ancestors(node_id: uuid.UUID) -> None:
     _send("opennotebook.refresh_ancestors", [str(node_id)], "default")
+
+
+def enqueue_summary(source_id: uuid.UUID) -> None:
+    _send("opennotebook.summarize_source", [str(source_id)], "summary")

@@ -29,6 +29,22 @@ dependencies = [
   "python-docx>=1.2,<2",
   "qdrant-client>=1.20,<1.21",
   "python-multipart>=0.0.33,<0.1",
+  # M3: images, web pages, source code (all deterministic: no ML models)
+  "pillow>=13.0,<14",
+  "trafilatura>=2.3,<2.4",
+  "tree-sitter>=0.26,<0.27",
+  "tree-sitter-bash==0.25.1",
+  "tree-sitter-c==0.24.2",
+  "tree-sitter-c-sharp==0.23.5",
+  "tree-sitter-cpp==0.23.4",
+  "tree-sitter-go==0.25.0",
+  "tree-sitter-java==0.23.5",
+  "tree-sitter-javascript==0.25.0",
+  "tree-sitter-php==0.25.1",
+  "tree-sitter-python==0.25.0",
+  "tree-sitter-ruby==0.23.1",
+  "tree-sitter-rust==0.24.2",
+  "tree-sitter-typescript==0.23.2",
 ]
 
 [project.scripts]

@@ -24,18 +24,54 @@ class ParseError(ValueError):
 
 @dataclass(frozen=True)
 class Sniffed:
-    format: str  # pdf | docx | markdown | text
+    format: str  # pdf | docx | markdown | text | html | code | image | zip | tar
     mime_type: str
+    kind: str = "file"  # SourceKind value
+    language: str | None = None
 
 
 MARKDOWN_EXT = (".md", ".markdown", ".mdown", ".mkd")
+HTML_EXT = (".html", ".htm", ".xhtml")
+_IMAGES = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+    (b"II*\x00", "image/tiff"),
+    (b"MM\x00*", "image/tiff"),
+)
+_COMPRESSED = (
+    (b"\x1f\x8b", "gz", "application/gzip"),
+    (b"BZh", "bz2", "application/x-bzip2"),
+    (b"\xfd7zXZ\x00", "xz", "application/x-xz"),
+)
+
+
+def _is_tar(head: bytes) -> bool:
+    return len(head) >= 262 and head[257:262] == b"ustar"
+
+
+def _decompressed_head(data: bytes, codec: str, size: int = 1024) -> bytes:
+    import bz2
+    import gzip
+    import lzma
+
+    stream = io.BytesIO(data)
+    try:
+        if codec == "gz":
+            with gzip.GzipFile(fileobj=stream) as f:
+                return f.read(size)
+        with bz2.BZ2File(stream) if codec == "bz2" else lzma.LZMAFile(stream) as f:
+            return f.read(size)
+    except (OSError, EOFError, lzma.LZMAError) as exc:
+        raise UnsupportedContent(f"Corrupted {codec} stream") from exc
 
 
 def sniff(data: bytes, filename: str) -> Sniffed:
     name = filename.lower()
     if data.startswith(b"%PDF-"):
         return Sniffed("pdf", "application/pdf")
-    if data.startswith(b"PK\x03\x04"):
+    if data.startswith(b"PK\x03\x04") or data.startswith(b"PK\x05\x06"):
         try:
             with zipfile.ZipFile(io.BytesIO(data)) as z:
                 names = set(z.namelist())
@@ -43,10 +79,27 @@ def sniff(data: bytes, filename: str) -> Sniffed:
             raise UnsupportedContent("Corrupted ZIP container") from exc
         if "word/document.xml" in names:
             return Sniffed("docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-        raise UnsupportedContent("Archives and other Office formats are supported from milestone M3")
-    for magic, kind in ((b"\x89PNG", "PNG"), (b"\xff\xd8\xff", "JPEG"), (b"GIF8", "GIF"), (b"RIFF", "RIFF")):
+        if "[Content_Types].xml" in names or "mimetype" in names:
+            raise UnsupportedContent("Office formats other than DOCX (PPTX, XLSX, ODF) are not supported yet")
+        return Sniffed("zip", "application/zip", kind="archive")
+    if data.startswith(b"7z\xbc\xaf\x27\x1c"):
+        raise UnsupportedContent("7z archives are not supported; use ZIP or TAR (.tar, .tar.gz, .tar.xz)")
+    if data.startswith(b"Rar!"):
+        raise UnsupportedContent("RAR archives are not supported; use ZIP or TAR")
+    if _is_tar(data[:512]):
+        return Sniffed("tar", "application/x-tar", kind="archive")
+    for magic, codec, mime in _COMPRESSED:
         if data.startswith(magic):
-            raise UnsupportedContent(f"{kind} images are supported from milestone M3 (OCR and description)")
+            if _is_tar(_decompressed_head(data, codec, 512)):
+                return Sniffed("tar", mime, kind="archive")
+            raise UnsupportedContent(
+                "Compressed single files are not supported; upload the file itself or a TAR"
+            )
+    for magic, mime in _IMAGES:
+        if data.startswith(magic):
+            return Sniffed("image", mime, kind="image")
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return Sniffed("image", "image/webp", kind="image")
     if b"\x00" in data[:8192]:
         raise UnsupportedContent("Binary file type not supported")
     try:
@@ -55,6 +108,14 @@ def sniff(data: bytes, filename: str) -> Sniffed:
         raise UnsupportedContent("Text files must be UTF-8 encoded") from exc
     if name.endswith(MARKDOWN_EXT):
         return Sniffed("markdown", "text/markdown")
+    head = data[:512].lstrip().lower()
+    if name.endswith(HTML_EXT) or head.startswith((b"<!doctype html", b"<html")):
+        return Sniffed("html", "text/html")
+    from opennotebook.ingestion.languages import detect_language
+
+    language = detect_language(filename, data[:200])
+    if language is not None:
+        return Sniffed("code", "text/plain", kind="code", language=language)
     return Sniffed("text", "text/plain")
 
 
@@ -68,17 +129,59 @@ def parse(data: bytes, fmt: str, title: str) -> ParsedDocument:
         match fmt:
             case "pdf":
                 return parse_pdf(data, title)
+            case "code":
+                from opennotebook.ingestion.code import parse_code
+                from opennotebook.ingestion.languages import detect_language
+
+                return parse_code(decode_text(data), detect_language(title, data[:200]), title)
             case "docx":
                 return parse_docx(data, title)
             case "markdown":
                 return parse_markdown(decode_text(data), title)
             case "text":
                 return parse_text(decode_text(data), title)
+            case "html":
+                return parse_html(decode_text(data), title)
     except (UnsupportedContent, ParseError):
         raise
     except Exception as exc:  # noqa: BLE001 - library errors on malformed input become ParseError
         raise ParseError(f"Could not parse {fmt.upper()}: {exc.__class__.__name__}") from exc
     raise UnsupportedContent(f"Unsupported format {fmt}")
+
+
+# --- HTML ----------------------------------------------------------------------------------------
+
+
+def parse_html(html: str, title: str) -> ParsedDocument:
+    """Main content of a web page as Markdown (navigation, footers and ads removed by trafilatura)."""
+    import trafilatura
+
+    markdown = trafilatura.extract(
+        html,
+        output_format="markdown",
+        include_tables=True,
+        include_links=False,
+        include_images=False,
+        include_comments=False,
+        with_metadata=False,
+    )
+    page_title = _html_title(html)
+    if not page_title:
+        meta = trafilatura.extract_metadata(html)
+        page_title = (meta.title if meta and meta.title else "") or title
+    if not markdown or not markdown.strip():
+        raise ParseError("No readable text found in the page")
+    return parse_markdown(markdown, page_title)
+
+
+def _html_title(html: str) -> str:
+    import lxml.html
+
+    try:
+        titles = lxml.html.fromstring(html).xpath("//head/title/text()")
+    except (ValueError, lxml.etree.ParserError):  # type: ignore[attr-defined]
+        return ""
+    return " ".join(str(titles[0]).split())[:300] if titles else ""
 
 
 # --- Markdown / text -----------------------------------------------------------------------------
@@ -123,14 +226,14 @@ def parse_markdown(text: str, title: str) -> ParsedDocument:
     if code is not None:
         b.block("\n".join(code), "code")
     flush()
-    return _ensure_content(b.build())
+    return ensure_content(b.build())
 
 
 def parse_text(text: str, title: str) -> ParsedDocument:
     b = DocumentBuilder(title)
     for para in re.split(r"\n\s*\n", text):
         b.block(para.rstrip(), "paragraph")
-    return _ensure_content(b.build())
+    return ensure_content(b.build())
 
 
 # --- DOCX ----------------------------------------------------------------------------------------
@@ -181,7 +284,7 @@ def parse_docx(data: bytes, title: str) -> ParsedDocument:
             flush_list()
             b.block(text, "paragraph")
     flush_list()
-    return _ensure_content(b.build())
+    return ensure_content(b.build())
 
 
 # --- PDF -----------------------------------------------------------------------------------------
@@ -240,7 +343,11 @@ def _inside(word: dict, box: tuple[float, float, float, float]) -> bool:
     return x0 <= cx <= x1 and top <= cy <= bottom
 
 
-def parse_pdf(data: bytes, title: str) -> ParsedDocument:
+def parse_pdf(
+    data: bytes, title: str, ocr_text: dict[int, str] | None = None, allow_empty: bool = False
+) -> ParsedDocument:
+    """`ocr_text` maps page numbers of scanned pages to their OCR transcription (Markdown);
+    `allow_empty` returns a document without blocks instead of failing (first pass before OCR)."""
     import pdfplumber
 
     with pdfplumber.open(io.BytesIO(data)) as pdf:
@@ -271,7 +378,20 @@ def parse_pdf(data: bytes, title: str) -> ParsedDocument:
             words = [w for w in words if not any(_inside(w, box) for box in table_boxes)]
             if not words and not tables:
                 if page.images:
-                    empty_pages.append(pno)
+                    doc.scanned_pages.append(pno)
+                    ocr = (ocr_text or {}).get(pno, "").strip()
+                    if ocr:
+                        full = {
+                            "page": pno,
+                            "x0": 0,
+                            "top": 0,
+                            "x1": float(page.width),
+                            "bottom": float(page.height),
+                        }
+                        for para in re.split(r"\n\s*\n", ocr):
+                            b.block(para.strip(), "ocr", page=pno, bboxes=[full])
+                    else:
+                        empty_pages.append(pno)
                 continue
 
             lines = _lines_from_words(words)
@@ -308,10 +428,13 @@ def parse_pdf(data: bytes, title: str) -> ParsedDocument:
 
         if empty_pages:
             doc.warnings.append(
-                f"{len(empty_pages)} page(s) without a text layer ({_ranges(empty_pages)}); "
-                "OCR of scanned pages arrives in milestone M3"
+                f"{len(empty_pages)} page(s) without a text layer ({_ranges(empty_pages)}) "
+                "were not transcribed"
             )
-    return _ensure_content(b.build())
+        ocr_pages = sorted(set(doc.scanned_pages) - set(empty_pages))
+        if ocr_pages:
+            doc.warnings.append(f"Text of page(s) {_ranges(ocr_pages)} obtained by OCR")
+    return b.build() if allow_empty else ensure_content(b.build())
 
 
 def _ranges(pages: list[int]) -> str:
@@ -326,7 +449,7 @@ def _ranges(pages: list[int]) -> str:
     return ", ".join(out)
 
 
-def _ensure_content(doc: ParsedDocument) -> ParsedDocument:
+def ensure_content(doc: ParsedDocument) -> ParsedDocument:
     if not doc.blocks:
         hint = f" ({'; '.join(doc.warnings)})" if doc.warnings else ""
         raise ParseError(f"No extractable text{hint}")

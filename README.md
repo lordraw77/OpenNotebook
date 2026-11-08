@@ -6,11 +6,12 @@ Upload documents, source code, archives, images, web pages and notes, organize t
 **Project → Workspace → Notebook** tree, and chat with an LLM that answers **only** from the sources in the selected
 scope. Every claim cites its source (`[Source 1, p. 4]`), and clicking a citation highlights the exact passage.
 
-> **Status: milestones M0 (foundations), M1 (ingestion) and M2 (grounded chat) complete.** Runs today: the packaged
-> stack, login, the hierarchy with sharing and on/off switches, the provider registry for nine providers, model
-> selection per phase (global and per project), upload and indexing of PDF/DOCX/Markdown/text and notes, scoped
-> hybrid search, and grounded chat with streaming answers, validated citations, provider fallback and a source
-> viewer that highlights the cited passage. Extended ingestion (M3) is next.
+> **Status: milestones M0–M3 complete** (foundations, ingestion, grounded chat, extended ingestion). Runs today: the
+> packaged stack, login, the hierarchy with sharing and on/off switches, the provider registry for nine providers,
+> model selection per phase (global and per project), indexing of documents, source code, archives, images, scanned
+> PDFs and web pages, automatic summaries with suggested questions, scoped hybrid search, and grounded chat with
+> streaming answers, validated citations, provider fallback and a source viewer that highlights the cited passage.
+> The knowledge graph and wiki (M4) are next.
 > See the [roadmap](docs/analysis/05-roadmap-and-decisions.md).
 
 ## Features
@@ -27,7 +28,11 @@ scope. Every claim cites its source (`[Source 1, p. 4]`), and clicking a citatio
 | Ingestion of PDF, TXT, Markdown, DOCX and notes; structure-aware chunking; embeddings per project; hybrid search with ACL pre-filter | ✅ M1 |
 | Grounded chat: streaming answers, strict prompt, validated clickable citations, provider fallback, optional rerank, conversations, save answer as note | ✅ M2 |
 | Source viewer: PDF page with the cited passage highlighted (pdf.js), text sources with the passage marked | ✅ M2 |
-| Archives, source code, images (OCR + description), web pages, summaries | M3 |
+| Source code with structure-aware chunking (tree-sitter: C, C++, Python, JS/TS, Java, Go, Rust, C#, PHP, Ruby, shell; other languages by lines) | ✅ M3 |
+| ZIP / TAR archives (each file a source, nested archives, zip-bomb and path-traversal protection) | ✅ M3 |
+| Images and scanned PDF pages: OCR + description by external models | ✅ M3 |
+| Web pages by URL (main text only, SSRF protection, optional same-site crawl respecting robots.txt) | ✅ M3 |
+| Summary and suggested questions per document (click a question to ask it) | ✅ M3 |
 | Knowledge graph and wiki pages | M4 |
 | Deep research mode, OIDC, per-project provider policy | M5 |
 
@@ -49,6 +54,8 @@ Every model call (chat, summaries, graph extraction, vision, OCR, embeddings, re
 | Ollama | any phase, on an existing external Ollama server |
 
 A working instance needs at least one chat model and one embedding model (Gemini or Mistral alone covers both).
+Images and scanned pages also need an OCR model (e.g. Mistral OCR) or a vision model; summaries use the
+`summary` chain and are skipped when it is empty.
 
 ## Quick start
 
@@ -122,4 +129,5 @@ docs/        analysis (requirements, architecture, data model, threat model, roa
 ## License
 
 To be defined. Third-party components are under permissive licenses (Angular and Angular Material: MIT;
-Material Symbols: Apache-2.0; Roboto: OFL-1.1; pdf.js: Apache-2.0; SeaweedFS: Apache-2.0).
+Material Symbols: Apache-2.0; Roboto: OFL-1.1; pdf.js: Apache-2.0; SeaweedFS: Apache-2.0; pdfplumber, tree-sitter
+and its grammars: MIT; trafilatura: Apache-2.0; Pillow: MIT-CMU).

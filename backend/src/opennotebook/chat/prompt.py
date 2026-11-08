@@ -28,6 +28,13 @@ SYSTEM_PROMPT = "\n".join(
 )
 
 
+# Repeated after the question: models follow the most recent instruction more reliably than the system prompt.
+REMINDER = (
+    "Answer from the sources above only. End each sentence that states a fact with its source marker, "
+    "e.g. [S1] or [S2][S3] (do not name files or titles instead of markers)."
+)
+
+
 @dataclass
 class ContextPassage:
     n: int
@@ -64,5 +71,5 @@ def build_context(passages: Sequence[ContextPassage]) -> str:
 
 def build_messages(history: Sequence[dict], passages: Sequence[ContextPassage], question: str) -> list[dict]:
     """System prompt, previous turns (plain text), then the question with its sources."""
-    user = f"{build_context(passages)}\n\nQuestion: {question}"
+    user = f"{build_context(passages)}\n\nQuestion: {question}\n\n{REMINDER}"
     return [{"role": "system", "content": SYSTEM_PROMPT}, *history, {"role": "user", "content": user}]

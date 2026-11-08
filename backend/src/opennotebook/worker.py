@@ -116,3 +116,29 @@ def refresh_ancestors_task(node_id: str) -> int:
             return await refresh_ancestors(session, uuid.UUID(node_id), index=index)
 
     return run(go())
+
+
+@celery_app.task(name="opennotebook.summarize_source", bind=True, acks_late=True)
+def summarize_source_task(self, source_id: str) -> str:  # type: ignore[no-untyped-def]
+    from opennotebook.ingestion.summary import mark_summary_failed, summarize_source
+    from opennotebook.providers.gateway import GatewayError
+
+    sessionmaker, _, _ = _deps()
+
+    async def go() -> str:
+        async with sessionmaker() as session:
+            return await summarize_source(session, uuid.UUID(source_id))
+
+    try:
+        return run(go())
+    except GatewayError as exc:
+        if self.request.retries >= 2:
+            error = exc
+
+            async def give_up() -> None:
+                async with sessionmaker() as session:
+                    await mark_summary_failed(session, uuid.UUID(source_id), error)
+
+            run(give_up())
+            return "failed"
+        raise self.retry(exc=exc, countdown=60 * 2**self.request.retries) from exc

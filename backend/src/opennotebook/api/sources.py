@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func, select
 
 from opennotebook.acl import get_node_for, get_search_scope, visible_nodes
@@ -16,9 +16,10 @@ from opennotebook.config import get_settings
 from opennotebook.deps import CurrentUser, SessionDep, audit
 from opennotebook.ingestion import queue
 from opennotebook.ingestion.parsers import UnsupportedContent, sniff
-from opennotebook.ingestion.pipeline import blob_key
+from opennotebook.ingestion.pipeline import blob_key, descendants, web_digest
 from opennotebook.ingestion.search import search_scope
 from opennotebook.ingestion.vectors import get_vector_index
+from opennotebook.ingestion.web import FetchError, normalize_url
 from opennotebook.models import (
     Chunk,
     GrantRole,
@@ -52,10 +53,35 @@ class SourceOut(BaseModel):
     page_count: int | None
     embedding_model_id: uuid.UUID | None
     note_id: uuid.UUID | None
+    parent_source_id: uuid.UUID | None = None
+    uri: str | None = None
+    language: str | None = None
+    summary: str | None = None
+    suggested_questions: list[str] = []
+    summary_status: str | None = None
+    summary_error: str | None = None
+    # archive manifest, web fetch details, crawl settings
+    details: dict = {}
     created_at: datetime
     indexed_at: datetime | None
 
     model_config = {"from_attributes": True}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _details(cls, value: object) -> object:
+        if isinstance(value, Source):
+            meta = value.metadata_ or {}
+            details = {
+                k: meta[k]
+                for k in ("archive", "final_url", "content_type", "fetched_at", "crawl")
+                if k in meta
+            }
+            return {
+                **{c: getattr(value, c) for c in cls.model_fields if c != "details" and hasattr(value, c)},
+                "details": details,
+            }
+        return value
 
 
 class UploadResult(BaseModel):
@@ -164,7 +190,8 @@ async def upload_sources(
         source = Source(
             id=uuid.uuid4(),
             notebook_id=notebook.id,
-            kind=SourceKind.file,
+            kind=SourceKind(sniffed.kind),
+            language=sniffed.language,
             title=filename,
             original_path=filename,
             mime_type=sniffed.mime_type,
@@ -192,6 +219,84 @@ async def upload_sources(
         queue.enqueue_ingestion(source.id, "upload")
         results.append(UploadResult(filename=filename, source=SourceOut.model_validate(source)))
     return results
+
+
+class WebIn(BaseModel):
+    urls: list[str] = Field(min_length=1, max_length=20)
+    # 0 = only the given pages; 1..WEB_CRAWL_MAX_DEPTH = follow links on the same site
+    crawl_depth: int = Field(default=0, ge=0)
+    max_pages: int | None = Field(default=None, ge=1)
+
+
+@router.post("/nodes/{notebook_id}/web", response_model=list[UploadResult], status_code=201)
+async def add_web_pages(
+    notebook_id: uuid.UUID, body: WebIn, user: CurrentUser, session: SessionDep
+) -> list[UploadResult]:
+    """Add web pages by URL; they are fetched by the worker (SSRF-protected) and indexed like documents."""
+    notebook, _ = await get_node_for(session, user, notebook_id, GrantRole.editor)
+    if notebook.kind != NodeKind.notebook:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Sources can only be added to a notebook")
+    settings = get_settings()
+    if body.crawl_depth > settings.web_crawl_max_depth:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, f"crawl_depth is limited to {settings.web_crawl_max_depth}"
+        )
+    max_pages = min(body.max_pages or settings.web_crawl_max_pages, settings.web_crawl_max_pages)
+    results: list[UploadResult] = []
+    created: list[Source] = []
+    for raw in body.urls:
+        try:
+            url = normalize_url(raw)
+        except (FetchError, ValueError) as exc:
+            results.append(UploadResult(filename=raw[:300], error=str(exc)))
+            continue
+        digest = web_digest(url)
+        existing = await session.scalar(
+            select(Source).where(
+                Source.notebook_id == notebook.id,
+                Source.content_sha256 == digest,
+                Source.deleted_at.is_(None),
+            )
+        )
+        if existing is not None:
+            results.append(
+                UploadResult(filename=url, source=SourceOut.model_validate(existing), duplicate=True)
+            )
+            continue
+        source = Source(
+            id=uuid.uuid4(),
+            notebook_id=notebook.id,
+            kind=SourceKind.web,
+            title=url[:500],
+            original_path=url,
+            uri=url,
+            mime_type="text/html",
+            content_sha256=digest,
+            size_bytes=0,
+            status=SourceStatus.queued,
+            created_by=user.id,
+            warnings=[],
+            metadata_={},
+        )
+        if body.crawl_depth:
+            source.metadata_ = {
+                "crawl": {"root": str(source.id), "depth_left": body.crawl_depth, "max_pages": max_pages}
+            }
+        session.add(source)
+        audit(session, user, "source.web", "source", source.id, url=url, crawl_depth=body.crawl_depth)
+        created.append(source)
+        results.append(UploadResult(filename=url, source=None))
+    await session.commit()
+    for source in created:
+        await session.refresh(source)
+        queue.enqueue_ingestion(source.id, "web")
+    by_url = {s.uri: s for s in created}
+    return [
+        UploadResult(filename=r.filename, source=SourceOut.model_validate(by_url[r.filename]))
+        if r.source is None and r.error is None and r.filename in by_url
+        else r
+        for r in results
+    ]
 
 
 @router.get("/sources", response_model=list[SourceOut])
@@ -239,6 +344,9 @@ async def update_source(
         source.title = body.title.strip()
     if body.active is not None:
         source.active = body.active
+        # archive members and crawled pages follow their parent's switch
+        for child in await descendants(session, source.id):
+            child.active = body.active
     audit(session, user, "source.update", "source", source.id, **body.model_dump(exclude_unset=True))
     await session.commit()
     await session.refresh(source)
@@ -250,10 +358,15 @@ async def delete_source(source_id: uuid.UUID, user: CurrentUser, session: Sessio
     source = await _source_for(session, user, source_id, GrantRole.editor)
     if source.kind == SourceKind.note:
         raise HTTPException(status.HTTP_409_CONFLICT, "Disable indexing on the note instead")
-    source.deleted_at = datetime.now(UTC)
-    audit(session, user, "source.delete", "source", source.id, title=source.title)
+    children = await descendants(session, source.id)
+    now = datetime.now(UTC)
+    source.deleted_at = now
+    for child in children:
+        child.deleted_at = now
+    audit(session, user, "source.delete", "source", source.id, title=source.title, children=len(children))
     await session.commit()
-    queue.enqueue_purge(source.id)
+    for s in [source, *children]:
+        queue.enqueue_purge(s.id)
 
 
 @router.post("/sources/{source_id}/reindex", response_model=SourceOut)

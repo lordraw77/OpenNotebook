@@ -67,18 +67,24 @@
         *matTreeNodeDef="let item; when: hasChild"
         [isExpandable]="true"
         class="tnode"
-        [class.selected]="item.node.id === selectedId() && !selectedSourceId()"
-        [class.inactive]="!item.node.active"
+        [class.selected]="
+          item.source
+            ? item.source.id === selectedSourceId()
+            : item.node.id === selectedId() && !selectedSourceId()
+        "
+        [class.inactive]="item.source ? !item.source.active : !item.node.active"
       >
         <button
           mat-icon-button
           matTreeNodeToggle
           class="toggle"
-          [attr.aria-label]="'Toggle ' + item.node.name"
+          [attr.aria-label]="'Toggle ' + (item.source ? item.source.title : item.node.name)"
         >
           <mat-icon>chevron_right</mat-icon>
         </button>
-        <ng-container *ngTemplateOutlet="row; context: { $implicit: item }"></ng-container>
+        <ng-container
+          *ngTemplateOutlet="item.source ? sourceRow : row; context: { $implicit: item }"
+        ></ng-container>
       </mat-tree-node>
     </mat-tree>
 
@@ -122,7 +128,7 @@
         (click)="$event.stopPropagation(); openSource(src.id)"
       >
         <mat-icon class="kind">{{ sourceIcons[src.kind] ?? 'description' }}</mat-icon>
-        <span class="name" [title]="src.title">{{ src.title }}</span>
+        <span class="name" [title]="src.original_path ?? src.title">{{ shortTitle(src) }}</span>
         @if (!isTerminal(src)) {
           <mat-icon class="state spin" [matTooltip]="src.status">progress_activity</mat-icon>
         } @else if (src.status === 'failed') {
@@ -228,6 +234,7 @@
         [canEdit]="hasRole(selected()!, 'editor')"
         (closed)="selectedSourceId.set(null)"
         (changed)="reloadSources(false)"
+        (ask)="askAbout(src, $event)"
       />
     } @else if (viewing(); as c) {
       <app-source-viewer
@@ -242,6 +249,7 @@
         [scopeId]="selectedId()"
         [modelId]="chatModelId()"
         [notebooks]="noteTargets()"
+        [askRequest]="askRequest()"
         (openCitation)="openCitation($event)"
         (noteSaved)="notesRefresh.set(notesRefresh() + 1)"
       />

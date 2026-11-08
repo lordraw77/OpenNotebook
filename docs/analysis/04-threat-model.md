@@ -38,6 +38,23 @@ Every model call crosses boundary 4 or 5: no model runs inside the stack (ADR-00
 | T15 | T | **Supply chain**: compromised images or packages. The LLM gateway library (LiteLLM) handles every provider key, so it is a high-value target. | Exact pin of LiteLLM and hash-locked install from `uv.lock`; upgrades reviewed explicitly; pinned image tags (digests at release), lock files, SBOM, image scanning; no model weights are ever downloaded or loaded (`make check-no-models`, also in CI). |
 | T16 | I | **Provider-side data retention / training** on submitted content. | Document each provider's data policy in Settings; prefer providers/plans with no-retention options for sensitive projects; per-project allowlist. |
 
+### 3.1 Implementation status (M3)
+
+- **T3 / T4 (archives)**: implemented without a disk: extraction is in memory with byte counting (declared sizes
+  are not trusted), ratio, total-size, file-count and depth limits; unsafe names, links, devices and encrypted
+  entries are skipped; blobs are stored under `sources/<id>/original`, never under the member name. Tests: zip
+  bomb, path traversal, symlinks (ZIP and TAR), file count.
+- **T5 (parsers)**: the worker runs non-root with a read-only root filesystem and no capabilities; images are
+  bounded by `IMAGE_MAX_PIXELS` (decompression bombs). The worker keeps egress because it calls the providers and
+  fetches web pages; a separate network-less parsing worker is planned for M6.
+- **T6 (SSRF)**: implemented in `ingestion/web.py`: http(s) only, no credentials, all resolved addresses must be
+  public (loopback, private, link-local incl. `169.254.169.254`, multicast, reserved, IPv4-mapped refused), the
+  connected peer is re-checked (DNS rebinding), redirects re-validated hop by hop, size/time limits, no environment
+  proxies. `WEB_ALLOW_PRIVATE=true` disables the address check for intranet use. Verified on the test stack:
+  `http://192.168.0.215:18080/` and `http://169.254.169.254/` are refused.
+- **T2 (prompt injection)** for summaries: document text is wrapped in a `<document>` block declared as data, and
+  the reply must be JSON (anything else is discarded).
+
 ## 4. Policies
 
 - **Least privilege**: each service has its own DB credentials with minimal rights; Qdrant, Redis and SeaweedFS are reachable only on the internal Docker network, with authentication enabled.

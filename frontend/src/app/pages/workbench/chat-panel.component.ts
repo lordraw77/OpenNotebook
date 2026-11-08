@@ -418,6 +418,8 @@ export class ChatPanelComponent {
   readonly modelId = input<string | null>(null);
   /** Notebooks in scope where the user may write notes (targets of "Save as note"). */
   readonly notebooks = input<NotebookOption[]>([]);
+  /** Question to ask right away (e.g. a suggested question); a new nonce asks again. */
+  readonly askRequest = input<{ text: string; nonce: number } | null>(null);
   readonly openCitation = output<Citation>();
   readonly noteSaved = output<void>();
 
@@ -439,10 +441,32 @@ export class ChatPanelComponent {
       const scope = this.scopeId();
       untracked(() => void this.loadScope(scope));
     });
+    effect(() => {
+      const request = this.askRequest();
+      if (!request) return;
+      untracked(() => void this.askWhenReady(request.text));
+    });
     inject(DestroyRef).onDestroy(() => this.abort?.abort());
   }
 
-  private async loadScope(scope: string | null): Promise<void> {
+  private scopeLoading: Promise<void> = Promise.resolve();
+
+  /** Starts a new conversation in the current scope with this question. */
+  private async askWhenReady(text: string): Promise<void> {
+    await this.scopeLoading;
+    if (this.streaming()) return;
+    this.conversationId.set(null);
+    this.messages.set([]);
+    this.question = text;
+    await this.send();
+  }
+
+  private loadScope(scope: string | null): Promise<void> {
+    this.scopeLoading = this.doLoadScope(scope);
+    return this.scopeLoading;
+  }
+
+  private async doLoadScope(scope: string | null): Promise<void> {
     this.abort?.abort();
     this.pending.set(null);
     this.error.set(null);

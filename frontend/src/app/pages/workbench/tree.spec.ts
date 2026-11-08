@@ -1,4 +1,5 @@
 import { TreeNodeDto } from '../../core/api.models';
+import { SourceDto } from '../../core/sources.api';
 import { CHILD_KINDS, breadcrumb, buildTree, hasRole } from './tree';
 
 const node = (
@@ -62,5 +63,14 @@ describe('tree helpers', () => {
     expect(hasRole(flat[4], 'editor')).toBe(false);
     expect(hasRole(flat[0], 'viewer')).toBe(false); // ancestor shown for navigation only
     expect(CHILD_KINDS.notebook).toEqual(['notebook']);
+  });
+
+  it('nests archive members and crawled pages under their parent source', () => {
+    const src = (id: string, parent: string | null) =>
+      ({ id, notebook_id: 'driver', parent_source_id: parent, title: id }) as SourceDto;
+    const tree = buildTree(flat, [src('fw.zip', null), src('a.c', 'fw.zip'), src('b.c', 'fw.zip')]);
+    const driver = tree[0].children[1].children[0].children[0];
+    expect(driver.children.map((c) => c.key)).toEqual(['s:fw.zip']);
+    expect(driver.children[0].children.map((c) => c.source!.id)).toEqual(['a.c', 'b.c']);
   });
 });

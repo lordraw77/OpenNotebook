@@ -83,6 +83,79 @@ const PAGE = 50;
           <p class="warn"><mat-icon inline>warning</mat-icon> {{ w }}</p>
         }
         <div class="chunks">
+          @if (s.uri) {
+            <p class="meta-line">
+              <mat-icon inline>link</mat-icon>
+              <a [href]="s.details.final_url ?? s.uri" target="_blank" rel="noopener noreferrer">{{
+                s.details.final_url ?? s.uri
+              }}</a>
+              @if (s.details.fetched_at) {
+                <span class="muted">· fetched {{ s.details.fetched_at | date: 'short' }}</span>
+              }
+              @if (s.details.crawl?.links_followed) {
+                <span class="muted"
+                  >· {{ s.details.crawl?.links_followed }} linked pages added</span
+                >
+              }
+            </p>
+          }
+          @if (s.language) {
+            <p class="meta-line muted"><mat-icon inline>code</mat-icon> {{ s.language }}</p>
+          }
+          @switch (s.summary_status) {
+            @case ('done') {
+              <section class="summary">
+                <h4><mat-icon inline>auto_awesome</mat-icon> Summary</h4>
+                <p>{{ s.summary }}</p>
+                @if (s.suggested_questions.length) {
+                  <div class="questions">
+                    @for (q of s.suggested_questions; track q) {
+                      <button
+                        type="button"
+                        class="question"
+                        matTooltip="Ask in the chat"
+                        (click)="ask.emit(q)"
+                      >
+                        <mat-icon inline>chat_bubble</mat-icon> {{ q }}
+                      </button>
+                    }
+                  </div>
+                }
+              </section>
+            }
+            @case ('pending') {
+              <p class="muted meta-line">
+                <mat-icon inline>hourglass_top</mat-icon> Summary being generated…
+              </p>
+            }
+            @case ('failed') {
+              <p class="muted meta-line">
+                <mat-icon inline>info</mat-icon> No summary: {{ s.summary_error }}
+              </p>
+            }
+          }
+          @if (s.details.archive; as a) {
+            <section class="summary">
+              <h4><mat-icon inline>folder_zip</mat-icon> Archive</h4>
+              <p>
+                {{ a.files }} {{ a.files === 1 ? 'file' : 'files' }} indexed as sources ·
+                {{ a.skipped_count }} skipped · {{ size(a.uncompressed_bytes) }} uncompressed ·
+                {{ a.format.toUpperCase() }}
+              </p>
+              @if (a.skipped.length) {
+                <details>
+                  <summary>Skipped files</summary>
+                  <ul class="skipped">
+                    @for (k of a.skipped; track k.path + $index) {
+                      <li>
+                        <code>{{ k.path }}</code> <span class="muted">{{ k.reason }}</span>
+                      </li>
+                    }
+                  </ul>
+                </details>
+              }
+            </section>
+          }
           @for (c of chunks(); track c.id) {
             <article class="chunk">
               <header class="muted">
@@ -165,6 +238,56 @@ const PAGE = 50;
       padding: 8px 16px 16px;
       flex: 1;
     }
+    .meta-line {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin: 0 0 8px;
+      overflow-wrap: anywhere;
+    }
+    .summary {
+      padding: 12px 14px;
+      margin-bottom: 12px;
+      border-radius: 12px;
+      background: var(--mat-sys-surface-container);
+      border: 1px solid var(--mat-sys-outline-variant);
+    }
+    .summary h4 {
+      margin: 0 0 6px;
+      font: var(--mat-sys-title-small);
+      color: var(--mat-sys-primary);
+    }
+    .summary p {
+      margin: 0;
+      line-height: 1.55;
+    }
+    .questions {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-top: 10px;
+    }
+    .question {
+      text-align: left;
+      padding: 6px 12px;
+      border-radius: 14px;
+      border: 1px solid var(--mat-sys-outline-variant);
+      background: var(--mat-sys-surface-container-low);
+      color: var(--mat-sys-on-surface);
+      font: var(--mat-sys-body-medium);
+      cursor: pointer;
+    }
+    .question:hover {
+      border-color: var(--mat-sys-primary);
+      color: var(--mat-sys-primary);
+    }
+    .skipped {
+      max-height: 200px;
+      overflow: auto;
+      font-size: 13px;
+      padding-left: 18px;
+    }
     .chunk {
       border-left: 3px solid var(--mat-sys-outline-variant);
       padding: 4px 12px;
@@ -187,6 +310,8 @@ export class SourceDetailComponent {
   readonly canEdit = input(false);
   readonly closed = output<void>();
   readonly changed = output<void>();
+  /** A suggested question was clicked: ask it in the chat. */
+  readonly ask = output<string>();
 
   readonly chunks = signal<ChunkDto[]>([]);
   readonly more = signal(false);

@@ -51,16 +51,23 @@ export function buildTree(nodes: TreeNodeDto[], sources: SourceDto[] = []): Tree
     list.forEach((i) => sort(i.children));
   };
   sort(roots);
+  // Archive members and crawled pages are nested under their parent source.
   const bySource = [...sources].sort((a, b) => a.title.localeCompare(b.title));
+  const sourceItems = new Map<string, TreeItem>();
   for (const src of bySource) {
     const notebook = items.get(src.notebook_id);
     if (notebook)
-      notebook.children.push({
+      sourceItems.set(src.id, {
         key: `s:${src.id}`,
         node: notebook.node,
         source: src,
         children: [],
       });
+  }
+  for (const item of sourceItems.values()) {
+    const parentId = item.source!.parent_source_id;
+    const parent = parentId ? sourceItems.get(parentId) : undefined;
+    (parent ?? items.get(item.source!.notebook_id)!).children.push(item);
   }
   return roots;
 }

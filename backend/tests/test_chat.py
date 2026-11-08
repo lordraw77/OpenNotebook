@@ -14,7 +14,7 @@ import litellm
 import pytest
 
 from opennotebook.chat.citations import NOT_FOUND, count_uncited, normalize, strip_markers
-from opennotebook.chat.prompt import ContextPassage, build_context, build_messages
+from opennotebook.chat.prompt import REMINDER, ContextPassage, build_context, build_messages
 from opennotebook.chat.retrieval import retrieval_query
 from opennotebook.models import ModelPhase
 from opennotebook.providers import service
@@ -43,6 +43,10 @@ def test_uncited_sentences_and_abstention():
         "```\ncode line without cite\n```"
     )
     assert count_uncited(text) == 1
+    # version numbers, file names, abbreviations and list lead-ins do not create uncited sentences
+    assert count_uncited("The serial is **ABC-123** and the firmware is **4.2.1** [S1].") == 0
+    assert count_uncited("It rejects absolute paths (e.g., `C:/x` or `/etc`) when unsafe [S1].") == 0
+    assert count_uncited("It performs the following checks on a member name:\n1. Splits it [S1].") == 0
     # markers after the full stop still cover the sentence
     assert (
         count_uncited("The default password is printed on the label. [S1] It is long and unique [S2].") == 0
@@ -59,7 +63,10 @@ def test_context_block_cannot_be_escaped_by_source_text():
     assert ctx.count("<source ") == 1 and ctx.count("</source>") == 1
     assert 'title="a &quot;quoted&quot; &lt;title&gt;"' in ctx and 'location="p. 2"' in ctx
     msgs = build_messages([{"role": "user", "content": "hi"}], [], "Q?")
-    assert msgs[0]["role"] == "system" and "ONLY" in msgs[0]["content"] and msgs[-1]["content"].endswith("Q?")
+    assert (
+        msgs[0]["role"] == "system" and "ONLY" in msgs[0]["content"] and "Question: Q?" in msgs[-1]["content"]
+    )
+    assert msgs[-1]["content"].endswith(REMINDER)
 
 
 def test_short_follow_up_is_searched_with_previous_question():

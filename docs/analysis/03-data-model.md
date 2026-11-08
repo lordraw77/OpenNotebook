@@ -172,6 +172,11 @@ status `complete|error|stopped`, `context` = passages given to the model, `citat
 `checks`, model used, fallback attempts, usage, latency, error). Citations are stored as JSONB snapshots on the
 message instead of a `message_citations` table, so they stay resolvable after a source is re-indexed (new chunk
 ids) or deleted. Notes saved from the chat (`origin = chat`) copy those citations.
+Implemented in migration `0004` (M3): `sources.summary`, `suggested_questions`, `summary_status`, `summary_model`,
+`summary_error` (instead of a separate `source_summaries` table: one summary per source), and a partial index on
+`parent_source_id` (archive members, crawled pages). Archive manifests, web fetch details and crawl settings live
+in `sources.metadata` (`archive`, `final_url`, `content_type`, `fetched_at`, `crawl`). Web sources store
+`sha256("url:" + normalized URL)` as `content_sha256`, so the notebook-level uniqueness deduplicates URLs.
 The other tables arrive with their milestone.
 
 ## 3. Scope and permission rules

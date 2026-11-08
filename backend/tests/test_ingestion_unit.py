@@ -24,15 +24,19 @@ def test_sniff_detects_by_content_not_extension():
     assert sniff(b"# Title\nbody", "readme.md").format == "markdown"
     assert sniff(b"plain body", "file.log").format == "text"
     assert sniff(make_docx([("p", "x")]), "x.bin").format == "docx"
-    with pytest.raises(UnsupportedContent, match="images"):
-        sniff(b"\x89PNG\r\n\x1a\n....", "pic.png")
+    assert sniff(b"\x89PNG\r\n\x1a\n....", "pic.txt").kind == "image"
+    assert sniff(b"RIFF\x00\x00\x00\x00WEBPVP8 ", "x").mime_type == "image/webp"
+    assert sniff(b"int main(void) { return 0; }\n", "src/main.c").language == "c"
+    assert sniff(b"#!/usr/bin/env python3\nprint(1)\n", "tool").language == "python"
+    assert sniff(b"<!DOCTYPE html><html><body>x</body></html>", "page").format == "html"
+    with pytest.raises(UnsupportedContent, match="7z"):
+        sniff(b"7z\xbc\xaf\x27\x1c" + b"\x00" * 20, "a.7z")
     with pytest.raises(UnsupportedContent, match="Binary"):
         sniff(b"\x00\x01\x02" * 10, "blob")
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
         z.writestr("a.txt", "x")
-    with pytest.raises(UnsupportedContent, match="M3"):
-        sniff(buf.getvalue(), "a.zip")
+    assert sniff(buf.getvalue(), "a.bin").format == "zip"
     with pytest.raises(UnsupportedContent, match="UTF-8"):
         sniff("caffè".encode("latin-1"), "x.txt")
 
