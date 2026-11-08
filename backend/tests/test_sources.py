@@ -76,6 +76,7 @@ def jobs(monkeypatch):
         queue, "enqueue_refresh_ancestors", lambda nid: recorded.append(("refresh", str(nid), ""))
     )
     monkeypatch.setattr(queue, "enqueue_summary", lambda sid: recorded.append(("summary", str(sid), "")))
+    monkeypatch.setattr(queue, "enqueue_graph", lambda sid: recorded.append(("graph", str(sid), "")))
     return recorded
 
 
@@ -91,6 +92,10 @@ async def run_jobs(session, jobs) -> list:
             )
         elif kind == "purge":
             await purge_source(session, uuid.UUID(ident), store=store, index=index)
+        elif kind == "graph":
+            from opennotebook.graph.extract import extract_source_graph
+
+            await extract_source_graph(session, uuid.UUID(ident), store)
         elif kind == "summary":
             from opennotebook.ingestion.summary import summarize_source
 

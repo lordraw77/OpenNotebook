@@ -70,3 +70,5 @@ jobs:
         run: scripts/gen-secrets.sh .env.ci
       - run: make build ENV_FILE=.env.ci
       - run: make check-no-models ENV_FILE=.env.ci
+      - name: Validate the deployment Compose file
+        run: cp .env.ci deploy/production/.env && docker compose -f deploy/production/docker-compose.yml --profile auth --profile observability config --quiet

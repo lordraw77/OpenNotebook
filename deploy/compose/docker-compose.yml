@@ -1,4 +1,5 @@
-# OpenNotebook — single Compose file with optional profiles.
+# OpenNotebook — development / build Compose file with optional profiles (builds the images from source).
+# To deploy published images without the source tree, use deploy/production/docker-compose.yml.
 #
 #   make up                                   # core stack (profiles from COMPOSE_PROFILES in .env)
 #   docker compose --env-file .env -f deploy/compose/docker-compose.yml up -d
@@ -11,7 +12,7 @@
 name: opennotebook
 
 x-app: &app
-  image: ${REGISTRY:-opennotebook}/api:${VERSION:-dev}
+  image: ${REGISTRY:-lordraw}/opennotebook-api:${VERSION:-dev}
   env_file:
     - path: ${OPENNOTEBOOK_ENV_FILE:-../../.env}
       required: true
@@ -31,9 +32,11 @@ x-app: &app
 
 services:
   web:
-    image: ${REGISTRY:-opennotebook}/web:${VERSION:-dev}
+    image: ${REGISTRY:-lordraw}/opennotebook-web:${VERSION:-dev}
     build:
       context: ../../frontend
+      args:
+        VERSION: ${VERSION:-dev}
     ports:
       - "${WEB_BIND:-0.0.0.0}:${WEB_PORT:-8080}:8080"
     depends_on:
@@ -54,6 +57,8 @@ services:
     build:
       context: ../../backend
       target: api
+      args:
+        VERSION: ${VERSION:-dev}
     command: ["api"]
     depends_on:
       migrate:
@@ -65,10 +70,12 @@ services:
 
   worker:
     <<: *app
-    image: ${REGISTRY:-opennotebook}/worker:${VERSION:-dev}
+    image: ${REGISTRY:-lordraw}/opennotebook-worker:${VERSION:-dev}
     build:
       context: ../../backend
       target: worker
+      args:
+        VERSION: ${VERSION:-dev}
     command: ["worker"]
     depends_on:
       migrate:

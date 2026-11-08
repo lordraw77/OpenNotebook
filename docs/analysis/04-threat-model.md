@@ -55,6 +55,16 @@ Every model call crosses boundary 4 or 5: no model runs inside the stack (ADR-00
 - **T2 (prompt injection)** for summaries: document text is wrapped in a `<document>` block declared as data, and
   the reply must be JSON (anything else is discarded).
 
+### 3.2 Implementation status (M4)
+
+- **T1 for the knowledge graph**: entities are shared per project but carry no text; names, descriptions,
+  relations and wiki pages are derived only from mentions and relations whose evidence source is visible to the
+  reader (`visibility.py`). Wiki pages are cached per set of visible passages. Tests: a user who can read only
+  `docs` sees neither entities nor relations nor wiki text derived from `source`. Switching a source or node off
+  removes its contribution, and graph expansion in the chat never leaves the scope.
+- **T2**: extraction and wiki prompts wrap passages as data and require JSON / cited text; unreadable replies are
+  discarded.
+
 ## 4. Policies
 
 - **Least privilege**: each service has its own DB credentials with minimal rights; Qdrant, Redis and SeaweedFS are reachable only on the internal Docker network, with authentication enabled.

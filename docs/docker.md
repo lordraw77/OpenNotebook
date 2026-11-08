@@ -1,11 +1,20 @@
 # Docker Overview
 
-OpenNotebook is distributed **only as container images**, started from **one Compose file**:
-`deploy/compose/docker-compose.yml`. The stack contains application services and infrastructure only;
+OpenNotebook is distributed **only as container images**, published on Docker Hub as
+`lordraw/opennotebook-web`, `lordraw/opennotebook-api` and `lordraw/opennotebook-worker`. Two Compose files describe
+the same stack:
+
+| File | Use |
+|---|---|
+| `deploy/production/docker-compose.yml` | **Deployment**: pulls the published images, needs only itself and a `.env` (no source tree); log rotation; observability config inline. See [deploy.md](deploy.md). |
+| `deploy/compose/docker-compose.yml` | **Development / build**: builds the images from the source tree (`make build`, `make up`). |
+
+Both start the same services, with the same profiles, networks and volumes. The rest of this page applies to both. The stack contains application services and infrastructure only;
 **no model runs inside it**. Every model call goes to an external provider (Groq, OpenRouter, Gemini, Cloudflare,
 Cerebras, Mistral, NVIDIA, Hugging Face, or an existing Ollama server).
 
-Always run Compose from the repository root with the env file, or use the Makefile, which does it for you:
+From a source checkout, run the development file from the repository root with the env file, or use the
+Makefile, which does it for you:
 
 ```bash
 docker compose --env-file .env -f deploy/compose/docker-compose.yml up -d
@@ -14,13 +23,15 @@ make up
 
 ## Images
 
-All OpenNotebook images share the release version (`VERSION` file / `VERSION` variable) and the `REGISTRY` prefix.
+All OpenNotebook images share the release version (`VERSION` file / `VERSION` variable) and the `REGISTRY`
+namespace: `<REGISTRY>/opennotebook-<service>:<VERSION>` (default namespace `lordraw`, i.e. Docker Hub). Each
+release is also tagged `latest`; images are `linux/amd64` and carry OCI labels (version, source).
 
-| Image | Built from | Purpose | Size (M0) |
+| Image | Built from | Purpose | Size |
 |---|---|---|---|
-| `opennotebook/web` | `frontend/` | Angular SPA served by unprivileged nginx; proxies `/api` to the api service (unbuffered, for the chat event stream); security headers; serves the pdf.js worker from `/pdfjs/` | ~70 MB |
-| `opennotebook/api` | `backend/` (target `api`) | FastAPI REST + SSE API; also runs the `migrate` one-shot job | ~735 MB |
-| `opennotebook/worker` | `backend/` (target `worker`) | Celery ingestion worker: parsing (pdfplumber, python-docx, tree-sitter grammars, trafilatura, Pillow, pypdfium2), archive expansion, web fetching, summaries | ~735 MB |
+| `lordraw/opennotebook-web` | `frontend/` | Angular SPA served by unprivileged nginx; proxies `/api` to the api service (unbuffered, for the chat event stream); security headers; serves the pdf.js worker from `/pdfjs/` | ~70 MB |
+| `lordraw/opennotebook-api` | `backend/` (target `api`) | FastAPI REST + SSE API; also runs the `migrate` one-shot job | ~735 MB |
+| `lordraw/opennotebook-worker` | `backend/` (target `worker`) | Celery ingestion worker: parsing (pdfplumber, python-docx, tree-sitter grammars, trafilatura, Pillow, pypdfium2), archive expansion, web fetching, summaries | ~735 MB |
 
 Third-party images: `postgres:18.6-alpine`, `qdrant/qdrant:v1.20.0`, `chrislusf/seaweedfs:4.52`, `redis:8.8.4-alpine`,
 and in profiles `quay.io/keycloak/keycloak:26.8.1`, `prom/prometheus:v3.15.1`, `grafana/grafana:13.2.5`.
@@ -67,7 +78,7 @@ Compose **profiles** let one file describe both the core stack and optional add-
 ```yaml
 services:
   api:                       # no profiles key -> always started
-    image: ${REGISTRY:-opennotebook}/api:${VERSION:-dev}
+    image: ${REGISTRY:-lordraw}/opennotebook-api:${VERSION:-dev}
   keycloak:
     profiles: [auth]         # started only with the "auth" profile
   prometheus:
@@ -123,6 +134,9 @@ Ingestion limits: `ARCHIVE_*` (size, files, ratio, depth; images inside archives
 The worker fetches web pages itself, from the `egress` network: private, loopback and link-local addresses are
 refused unless `WEB_ALLOW_PRIVATE=true` (needed only to index intranet sites).
 
+Knowledge graph (`GRAPH_*`, `WIKI_*`, `CHAT_GRAPH_EXPANSION_CHUNKS`): extraction runs on the `graph` queue after
+indexing; wiki pages are written on first view and cached.
+
 Chat tuning (`CHAT_*`, `RERANK_TIMEOUT_S`): how many passages are retrieved and given to the model, the history
 length, the answer length and the interactive timeouts; defaults are in `.env.example`.
 
@@ -142,7 +156,8 @@ length, the answer length and the interactive timeouts; defaults are in `.env.ex
 | `make lint` / `make fmt` | ruff + prettier |
 | `make check-no-models` | verify images contain no ML runtimes or model weights |
 | `make bundle` | release tarball: images + compose + `.env.example` + `install.sh` |
-| `make release VERSION=x.y.z REGISTRY=…` | build, check and push images |
+| `make release VERSION=x.y.z REGISTRY=…` | build, check and push images (`VERSION` and `latest`) |
+| `make hub-publish` | build, check, create/update the Docker Hub repositories with their overview (`docs/dockerhub/`), push `VERSION` and `latest` |
 | `make clean` | stop and **delete all volumes** (asks for confirmation) |
 
 Use another env file with `ENV_FILE=path`, e.g. `make up ENV_FILE=.env.staging`.
@@ -180,6 +195,8 @@ tar xzf opennotebook-<version>-bundle.tar.gz && cd opennotebook-<version>
 | Chat waits a long time before answering | a slow chat model (e.g. CPU-only Ollama) gets `CHAT_FIRST_TOKEN_TIMEOUT_S` to start; lower it to fall back sooner |
 | PDF viewer stays empty, console reports a module MIME type error | the `/pdfjs/` location of `frontend/nginx.conf` (serves `.mjs` as JavaScript) is missing from a custom nginx config |
 | Sources stay in `embedding`, search returns 503 "Timeout" | the embedding provider is slow or saturated (e.g. a CPU-only Ollama also serving chat models); check **RAG Status → Recent jobs**, or assign a faster embedding model globally or per project and re-index |
+| Wiki is empty | entities appear after the `graph` job of each source: documents need a `graph_extraction` model (Settings → Models); existing sources are processed with **RAG Status → Rebuild graph** |
+| Graph extraction is slow | one model call per ~8000 characters of text (`GRAPH_BATCH_CHARS`); use a fast model for the `graph_extraction` phase or lower `GRAPH_MAX_CHUNKS_PER_SOURCE` |
 | Image source fails with "Images need an OCR or a vision model" | assign an `ocr` model (e.g. Mistral OCR) or a `vision` model in Settings → Models, globally or for the project, then re-index |
 | Images are slow to index | each image costs an OCR and a vision call; a CPU-only Ollama vision model takes minutes per image — use a cloud vision model for the project |
 | Web page fails with "Address … is not allowed" | the host resolves to a private or reserved address (SSRF protection); set `WEB_ALLOW_PRIVATE=true` only if intranet sites must be indexed |

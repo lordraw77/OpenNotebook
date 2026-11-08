@@ -142,3 +142,29 @@ def summarize_source_task(self, source_id: str) -> str:  # type: ignore[no-untyp
             run(give_up())
             return "failed"
         raise self.retry(exc=exc, countdown=60 * 2**self.request.retries) from exc
+
+
+@celery_app.task(name="opennotebook.extract_graph", bind=True, acks_late=True)
+def extract_graph_task(self, source_id: str) -> str:  # type: ignore[no-untyped-def]
+    from opennotebook.graph.extract import extract_source_graph, mark_graph_failed
+    from opennotebook.providers.gateway import GatewayError
+
+    sessionmaker, store, _ = _deps()
+
+    async def go() -> str:
+        async with sessionmaker() as session:
+            return await extract_source_graph(session, uuid.UUID(source_id), store)
+
+    try:
+        return run(go())
+    except GatewayError as exc:
+        if self.request.retries >= 2:
+            error = exc
+
+            async def give_up() -> None:
+                async with sessionmaker() as session:
+                    await mark_graph_failed(session, uuid.UUID(source_id), error)
+
+            run(give_up())
+            return "failed"
+        raise self.retry(exc=exc, countdown=60 * 2**self.request.retries) from exc

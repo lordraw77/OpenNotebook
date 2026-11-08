@@ -10,7 +10,7 @@
 | **M1 — Hierarchy, providers, basic ingestion** ✅ (2026-11-06) | Nodes + ACL, provider registry for the 9 providers, per-phase assignment with fallback, PDF/TXT/MD/DOCX upload, manual notes, pdfplumber parsing, chunking, external embeddings + BM25 sparse vectors, Qdrant, SeaweedFS, Upload page and minimal RAG Status page. | A source reaches `ready` with visible chunks; "Test connection" passes for each configured provider. |
 | **M2 — Grounded chat** ✅ (2026-11-06) | Hybrid retrieval + rerank, scope and switches, strict prompt, validated citations, SSE, PDF/text viewer with highlighting, 3-column Workbench, save answer as note. | US-01, US-02, US-03, US-09 pass. |
 | **M3 — Extended ingestion** ✅ (2026-11-08) | Archives (hardened), code (tree-sitter), images (OCR + vision), web scraping (SSRF-safe), summary and suggested questions. | US-04, US-05, US-06 pass. |
-| **M4 — Graph and wiki** | Entity/relation extraction, code graph, graph-based retrieval expansion, navigable wiki pages, graph view. | Multi-hop questions improve on the eval set. |
+| **M4 — Graph and wiki** ✅ (2026-11-08) | Entity/relation extraction, code graph, graph-based retrieval expansion, navigable wiki pages, graph view. | Multi-hop questions improve on the eval set. |
 | **M5 — Advanced research and administration** | Multi-step agent / cited report, encrypted key management UI, groups and full permissions, OIDC, per-project provider policy. | US-07, US-08 pass. |
 | **M6 — Production** | Observability (OTel, dashboards, alerts, SLOs), hardening, load tests, backup/restore, release bundle, operations docs, first release. | Runbooks and SLOs defined; `make bundle` installs on a host without registry access. |
 
@@ -65,6 +65,20 @@ Continuous RAG quality evaluation from M2: a question/expected-answer dataset pe
 - The source list and tree load every source of the visible notebooks: an archive with thousands of files makes
   them heavy (pagination / lazy tree loading planned).
 
+## 2.4 Known limitations after M4
+
+- Entity resolution is by normalized name only: abbreviations and synonyms ("AP" / "access point") stay separate
+  entities.
+- No community detection or topic pages; the wiki has one page per entity.
+- Graph extraction costs one model call per ~8000 characters; large corpora need a fast, cheap model for the
+  `graph_extraction` phase. Sources indexed before M4 need **Rebuild graph**.
+- The graph view shows the 150 most-mentioned entities of the scope; there is no server-side neighbourhood
+  exploration yet.
+- Code calls are resolved by name (same file, or a unique function name in the project); dynamic dispatch and
+  overloaded names are not resolved.
+- The "multi-hop questions improve on the eval set" exit criterion still needs the RAG evaluation set (see M2
+  limitations); graph expansion is verified by tests and by manual checks.
+
 ## 3. Open decisions
 
 Also pending on the operator side: the Hugging Face token in the test `.env` is expired (HTTP 401).
@@ -72,7 +86,7 @@ Also pending on the operator side: the Hugging Face token in the test `.env` is 
 | # | Question | Proposed default |
 |---|---|---|
 | D2 | Can a source belong to multiple notebooks at the same time? | No in v1 (logical copy without re-embedding if needed). |
-| D4 | Graph: PostgreSQL (simpler) or Neo4j (rich graph queries and visualization)? | PostgreSQL in v1. |
+| D4 | ~~Graph: PostgreSQL (simpler) or Neo4j (rich graph queries and visualization)?~~ | Resolved in M4: PostgreSQL (1-hop expansion and per-entity reads are all that is needed so far). |
 | D5 | Vector DB: Qdrant (proposed) or pgvector to reduce components? | Qdrant. |
 | D6 | Authentication: local users, OIDC/Keycloak, corporate LDAP/AD? | Local + OIDC. |
 | D7 | Confidentiality constraints: which projects may use cloud providers? | All allowed by default; per-project "local only" policy available. |

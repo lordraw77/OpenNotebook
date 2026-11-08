@@ -19,6 +19,12 @@ COPY src ./src
 RUN uv sync --frozen --no-dev --no-editable
 
 FROM base AS api
+ARG VERSION=dev
+LABEL org.opencontainers.image.title="OpenNotebook API" \
+      org.opencontainers.image.description="OpenNotebook REST/SSE API (FastAPI): grounded RAG chat, knowledge graph, model gateway. No models inside." \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.source="https://github.com/lordraw77/OpenNotebook" \
+      org.opencontainers.image.url="https://hub.docker.com/r/lordraw/opennotebook-api"
 RUN useradd --uid 10001 --user-group --no-create-home --shell /usr/sbin/nologin app
 WORKDIR /app
 COPY --from=build --chown=root:root /app/.venv /app/.venv
@@ -31,7 +37,11 @@ ENTRYPOINT ["opennotebook"]
 CMD ["api"]
 
 FROM api AS worker
-# From M1 this stage adds LibreOffice (DOCX/PPTX -> PDF), tree-sitter grammars and Playwright Chromium.
+# Same code and dependencies as the api (parsers, tree-sitter grammars, trafilatura, Pillow are Python wheels);
+# only the entrypoint and health check differ.
+LABEL org.opencontainers.image.title="OpenNotebook worker" \
+      org.opencontainers.image.description="OpenNotebook ingestion worker (Celery): parsing, OCR/vision calls, web fetching, embeddings, knowledge graph, summaries. No models inside." \
+      org.opencontainers.image.url="https://hub.docker.com/r/lordraw/opennotebook-worker"
 HEALTHCHECK --interval=30s --timeout=15s --start-period=30s --retries=3 \
   CMD ["sh", "-c", "celery -A opennotebook.worker:celery_app inspect ping -d celery@$HOSTNAME --timeout 10 >/dev/null"]
 CMD ["worker"]

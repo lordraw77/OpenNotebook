@@ -60,6 +60,8 @@ class SourceOut(BaseModel):
     suggested_questions: list[str] = []
     summary_status: str | None = None
     summary_error: str | None = None
+    graph_status: str | None = None
+    graph_error: str | None = None
     # archive manifest, web fetch details, crawl settings
     details: dict = {}
     created_at: datetime

@@ -35,9 +35,9 @@
 
 | Component | Image | Responsibility |
 |---|---|---|
-| **web** | `opennotebook/web` | Angular 22 (standalone components, signals, zoneless) + Angular Material 22 (M3 theme, self-hosted Roboto and Material Symbols): tree, slide toggles, tables, dialogs; pdf.js viewer with highlighting (M2). nginx serves the SPA and reverse-proxies `/api`. |
-| **api** | `opennotebook/api` | FastAPI: authentication, per-node authorization, CRUD of hierarchy/sources/notes, retrieval and chat orchestration (SSE), provider settings. Stateless, horizontally scalable. |
-| **worker** | `opennotebook/worker` | Asynchronous ingestion pipeline on separate queues (`parse`, `ocr_vision`, `embed`, `graph`, `summary`) so heavy jobs are isolated. Same codebase as api, different entrypoint. |
+| **web** | `lordraw/opennotebook-web` | Angular 22 (standalone components, signals, zoneless) + Angular Material 22 (M3 theme, self-hosted Roboto and Material Symbols): tree, slide toggles, tables, dialogs; pdf.js viewer with highlighting (M2). nginx serves the SPA and reverse-proxies `/api`. |
+| **api** | `lordraw/opennotebook-api` | FastAPI: authentication, per-node authorization, CRUD of hierarchy/sources/notes, retrieval and chat orchestration (SSE), provider settings. Stateless, horizontally scalable. |
+| **worker** | `lordraw/opennotebook-worker` | Asynchronous ingestion pipeline on separate queues (`parse`, `ocr_vision`, `embed`, `graph`, `summary`) so heavy jobs are isolated. Same codebase as api, different entrypoint. |
 | **postgres** | `postgres` (pinned) | Source of truth: users, ACL, hierarchy, sources, chunk text + provenance, notes, chats, jobs, configuration, knowledge graph. |
 | **qdrant** | `qdrant/qdrant` (pinned) | Dense + sparse chunk vectors, payload filters for scope/ACL/active state. |
 | **seaweedfs** | `chrislusf/seaweedfs` (pinned) | S3-compatible object storage for binaries (originals and derivatives). See ADR-007. |
@@ -251,10 +251,49 @@ Implemented:
   its citations server side. The client cannot forge citations, and only the owner of the conversation can do
   this.
 
-Not yet: graph expansion (M4), LLM query rewriting and decomposition (advanced mode, M5), and a judge-model
-groundedness check.
+Not yet: LLM query rewriting and decomposition (advanced mode, M5) and a judge-model groundedness check.
+Graph expansion: see §4.2.
 Ingestion runs in the Celery worker (`opennotebook.ingest_source`); provider errors are retried with exponential
 backoff up to `INGESTION_MAX_ATTEMPTS`, parse errors fail immediately.
+
+### 4.2 Knowledge graph and wiki (M4)
+
+- **Storage** (migration `0005`, ADR-004): `entities(project, canonical, name, type)` unique per project and
+  canonical name, `entity_mentions(entity, chunk, source, surface name, description)`, `relations(src, dst,
+  type, description, chunk, source)`, `wiki_pages(entity, basis, body, citations)`. Every mention and relation
+  points to the passage that states it. Entities carry no text of their own: names and descriptions shown to a
+  user always come from mentions they can see.
+- **Extraction** (`graph/extract.py`, `graph` queue, after a source becomes ready):
+  - Documents: the `graph_extraction` chain reads batches of numbered passages (`GRAPH_BATCH_CHARS`, at most
+    `GRAPH_MAX_CHUNKS_PER_SOURCE`) and returns JSON entities with types (person, organization, product,
+    component, technology, concept, location, event, document, standard) and passage numbers, plus relations
+    with a snake_case verb and the evidence passage.
+  - Merge: canonical name = NFKC, case-folded, punctuation trimmed, leading English/Italian articles removed.
+  - Source code: no model. File entities, symbols with their kind from tree-sitter (`defines`, `contains`),
+    `imports` between project files (C/C++ `#include "…"`, Python imports, JS/TS relative imports), and `calls`
+    resolved in the file or to a unique function of the project. Calls to functions indexed later are kept as
+    pending and resolved when their file is processed.
+  - Re-extraction replaces the source's graph data. Deleting a source cascades through its chunks, and
+    entities left without mentions or relations are removed.
+- **Visibility** (`visibility.py`, threat T1): one rule for the whole graph, the same as retrieval. Visible
+  sources are ready, not deleted and switched on, under the scope, inside readable subtrees, and with no node
+  switched off on their path. Visibility applies as follows:
+  - an entity is visible only through visible mentions, and its name is the most frequent visible surface form;
+  - a relation is visible only when its evidence passage is visible and the other end has a visible mention;
+  - otherwise the API answers 404, as for a missing entity.
+- **Wiki pages** (`graph/wiki.py`): written on first view by the `summary` chain (or `chat` when no summary chain
+  exists) from at most `WIKI_MAX_PASSAGES` visible passages, round-robin across sources, with [Sn] citations
+  validated like chat answers. The cache key is the hash of the passages used, so readers with the same visible
+  passages share a page and a reader who sees fewer sources gets a page written only from those.
+- **Chat expansion**: after hybrid retrieval, rerank and diversification, the entities mentioned in the selected
+  passages are expanded one hop. Relation evidence and neighbours' mentions add up to
+  `CHAT_GRAPH_EXPANSION_CHUNKS` passages, always from visible sources. They are marked `via: graph` in the
+  context and shown with a graph icon on the citation.
+- **UI** (`/wiki`): scope selector, entity list with search and type filters, a static force layout (d3-force,
+  computed once) with pan and zoom, and entity pages with the wiki text, related entities and mentions. Citations
+  and mentions open the source viewer. RAG Status offers **Rebuild graph** per project, without re-embedding.
+- Not implemented: community detection and topic pages, embedding-based entity resolution (e.g. "AP" =
+  "access point"), graph-aware query planning (M5).
 
 ## 5. Highlighting in the source
 

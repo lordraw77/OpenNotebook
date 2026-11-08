@@ -62,6 +62,18 @@ class Settings(BaseSettings):
     summary_enabled: bool = True
     summary_input_chars: int = 12000
 
+    # Knowledge graph and wiki
+    graph_enabled: bool = True
+    # chunks of one source sent to the graph extraction model (cost bound)
+    graph_max_chunks_per_source: int = 200
+    # characters per extraction request (several chunks per call)
+    graph_batch_chars: int = 8000
+    # chat: passages added from the neighbours of the entities found in the retrieved passages
+    chat_graph_expansion_chunks: int = 4
+    # passages given to the model to write a wiki page
+    wiki_max_passages: int = 12
+    wiki_timeout_s: int = 120
+
     # Grounded chat
     # passages retrieved by hybrid search before rerank / diversification
     chat_candidates: int = 40

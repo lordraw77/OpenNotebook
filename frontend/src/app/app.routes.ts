@@ -27,6 +27,11 @@ export const routes: Routes = [
           import('./pages/upload/upload.component').then((m) => m.UploadComponent),
       },
       {
+        path: 'wiki',
+        title: 'Wiki · OpenNotebook',
+        loadComponent: () => import('./pages/wiki/wiki.component').then((m) => m.WikiComponent),
+      },
+      {
         path: 'status',
         title: 'RAG Status · OpenNotebook',
         loadComponent: () =>

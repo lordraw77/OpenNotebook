@@ -8,6 +8,12 @@ COPY . .
 RUN npx ng build --configuration production
 
 FROM nginxinc/nginx-unprivileged:1.31.7-alpine
+ARG VERSION=dev
+LABEL org.opencontainers.image.title="OpenNotebook web" \
+      org.opencontainers.image.description="OpenNotebook web UI (Angular) served by unprivileged nginx; proxies /api to the api service." \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.source="https://github.com/lordraw77/OpenNotebook" \
+      org.opencontainers.image.url="https://hub.docker.com/r/lordraw/opennotebook-web"
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY security-headers.conf /etc/nginx/snippets/security-headers.conf
 COPY --from=build /src/dist/frontend/browser /usr/share/nginx/html

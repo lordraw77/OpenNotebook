@@ -57,7 +57,8 @@ def database() -> None:
 
 
 TABLES = (
-    "messages, conversations, ingestion_jobs, chunks, source_blobs, sources, notes, "
+    "wiki_pages, relations, entity_mentions, entities, messages, conversations, ingestion_jobs, chunks, "
+    "source_blobs, sources, notes, "
     "phase_assignments, provider_models, providers, secrets, node_grants, nodes, refresh_tokens, "
     "group_members, groups, users, audit_log"
 )

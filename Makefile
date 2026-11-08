@@ -3,7 +3,7 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
 VERSION  ?= $(shell cat VERSION 2>/dev/null || echo dev)
-REGISTRY ?= opennotebook
+REGISTRY ?= lordraw
 ENV_FILE ?= .env
 OPENNOTEBOOK_ENV_FILE := $(abspath $(ENV_FILE))
 export VERSION REGISTRY OPENNOTEBOOK_ENV_FILE
@@ -66,14 +66,20 @@ fmt: ## Format backend and frontend code
 	cd frontend && npx prettier --write "src/**/*.{ts,html,scss}"
 
 check-no-models: ## Verify that images contain no model weights or ML runtimes
-	@scripts/check-no-models.sh $(REGISTRY)/api:$(VERSION) $(REGISTRY)/worker:$(VERSION)
+	@scripts/check-no-models.sh $(REGISTRY)/opennotebook-api:$(VERSION) $(REGISTRY)/opennotebook-worker:$(VERSION)
 
 bundle: build check-no-models ## Create a release tarball (images + compose + .env.example + install.sh)
 	@scripts/bundle.sh $(VERSION) $(REGISTRY)
 
-release: build check-no-models ## Tag and push images: make release VERSION=x.y.z REGISTRY=ghcr.io/<org>/opennotebook
+release: build check-no-models ## Push images (VERSION and latest): make release REGISTRY=<namespace>
 	@test "$(VERSION)" != "dev" || (echo "Set VERSION=x.y.z" && exit 1)
-	for img in web api worker; do docker push $(REGISTRY)/$$img:$(VERSION); done
+	for img in web api worker; do \
+	  docker tag $(REGISTRY)/opennotebook-$$img:$(VERSION) $(REGISTRY)/opennotebook-$$img:latest && \
+	  docker push $(REGISTRY)/opennotebook-$$img:$(VERSION) && docker push $(REGISTRY)/opennotebook-$$img:latest; \
+	done
+
+hub-publish: ## Build, check, push to Docker Hub and update the repository overviews (scripts/publish-dockerhub.sh)
+	@scripts/publish-dockerhub.sh $(VERSION) $(REGISTRY)
 
 docker/build: build ## Alias of `build`
 docker/run: up ## Alias of `up`

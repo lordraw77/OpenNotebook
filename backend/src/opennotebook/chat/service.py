@@ -145,7 +145,10 @@ async def answer_stream(
             ]
             query = retrieval_query(question, [m.content for m in previous if m.role == "user"])
             retrieved = await retrieve(session, get_vector_index(), user, scope, query)
-            context = [context_entry(i + 1, h) for i, h in enumerate(retrieved.hits)]
+            context = [
+                {**context_entry(i + 1, h), "via": "graph" if h.chunk.id in retrieved.via_graph else "search"}
+                for i, h in enumerate(retrieved.hits)
+            ]
             answer.context = context
             answer.checks = {
                 "embedding_model": retrieved.embedding_model,

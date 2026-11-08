@@ -123,6 +123,13 @@ import { IngestionStatus, SourcesApi } from '../../core/sources.api';
                   >
                     <mat-icon>refresh</mat-icon> Re-index
                   </button>
+                  <button
+                    mat-button
+                    (click)="rebuildGraph(p.project_id, p.project_name)"
+                    [disabled]="!p.sources"
+                  >
+                    <mat-icon>hub</mat-icon> Rebuild graph
+                  </button>
                 }
               </td>
             </ng-container>
@@ -296,6 +303,23 @@ export class StatusComponent {
       const r = await this.sourcesApi.reindexProject(id);
       this.snack.open(`${r.queued} sources queued`, 'Close', { duration: 3000 });
       await this.loadIngestion();
+    } catch (err) {
+      this.snack.open(errorMessage(err), 'Close', { duration: 5000 });
+    }
+  }
+
+  async rebuildGraph(id: string, name: string): Promise<void> {
+    if (
+      !confirm(
+        `Re-extract the knowledge graph of “${name}”? Documents are sent again to the graph extraction model (code needs no model).`,
+      )
+    )
+      return;
+    try {
+      const r = await this.sourcesApi.rebuildProjectGraph(id);
+      this.snack.open(`${r.queued} sources queued for graph extraction`, 'Close', {
+        duration: 3000,
+      });
     } catch (err) {
       this.snack.open(errorMessage(err), 'Close', { duration: 5000 });
     }

@@ -6,12 +6,14 @@ Upload documents, source code, archives, images, web pages and notes, organize t
 **Project → Workspace → Notebook** tree, and chat with an LLM that answers **only** from the sources in the selected
 scope. Every claim cites its source (`[Source 1, p. 4]`), and clicking a citation highlights the exact passage.
 
-> **Status: milestones M0–M3 complete** (foundations, ingestion, grounded chat, extended ingestion). Runs today: the
+> **Status: milestones M0–M4 complete** (foundations, ingestion, grounded chat, extended ingestion, knowledge
+> graph and wiki). Runs today: the
 > packaged stack, login, the hierarchy with sharing and on/off switches, the provider registry for nine providers,
 > model selection per phase (global and per project), indexing of documents, source code, archives, images, scanned
 > PDFs and web pages, automatic summaries with suggested questions, scoped hybrid search, and grounded chat with
 > streaming answers, validated citations, provider fallback and a source viewer that highlights the cited passage.
-> The knowledge graph and wiki (M4) are next.
+> A knowledge graph (entities and relations with their evidence passages) feeds a navigable wiki and expands the
+> chat context. Advanced research mode and administration (M5) are next.
 > See the [roadmap](docs/analysis/05-roadmap-and-decisions.md).
 
 ## Features
@@ -33,7 +35,9 @@ scope. Every claim cites its source (`[Source 1, p. 4]`), and clicking a citatio
 | Images and scanned PDF pages: OCR + description by external models | ✅ M3 |
 | Web pages by URL (main text only, SSRF protection, optional same-site crawl respecting robots.txt) | ✅ M3 |
 | Summary and suggested questions per document (click a question to ask it) | ✅ M3 |
-| Knowledge graph and wiki pages | M4 |
+| Knowledge graph: entities and relations from documents (graph extraction model) and from code (symbols, imports, calls — no model) | ✅ M4 |
+| Wiki: entity pages written from the passages the reader can see, with citations; graph view; related entities | ✅ M4 |
+| Graph expansion of the chat context (neighbouring entities' passages, same access rules) | ✅ M4 |
 | Deep research mode, OIDC, per-project provider policy | M5 |
 
 ## No models inside
@@ -55,9 +59,27 @@ Every model call (chat, summaries, graph extraction, vision, OCR, embeddings, re
 
 A working instance needs at least one chat model and one embedding model (Gemini or Mistral alone covers both).
 Images and scanned pages also need an OCR model (e.g. Mistral OCR) or a vision model; summaries use the
-`summary` chain and are skipped when it is empty.
+`summary` chain and are skipped when it is empty; the knowledge graph of documents uses the `graph_extraction`
+chain (source code needs no model).
 
-## Quick start
+## Deploy from Docker Hub
+
+No source checkout needed: the images are published as `lordraw/opennotebook-{web,api,worker}`.
+
+```bash
+mkdir opennotebook && cd opennotebook
+BASE=https://raw.githubusercontent.com/lordraw77/OpenNotebook/HEAD
+curl -fsSLO $BASE/deploy/production/docker-compose.yml
+curl -fsSLO $BASE/.env.example
+curl -fsSL  $BASE/scripts/gen-secrets.sh -o gen-secrets.sh && chmod +x gen-secrets.sh
+./gen-secrets.sh .env      # internal secrets + first admin password
+$EDITOR .env               # BOOTSTRAP_ADMIN_EMAIL, provider keys, optional MODEL_* defaults
+docker compose up -d       # http://<host>:8080
+```
+
+Full guide (TLS, upgrades, backup, profiles): [docs/deploy.md](docs/deploy.md).
+
+## Quick start from source
 
 Requirements: Docker Engine with the Compose plugin, GNU make, 4 GB RAM (8 GB recommended), outbound HTTPS to your providers.
 
@@ -116,18 +138,19 @@ make fmt                                # format everything
 ```
 backend/     FastAPI API, Celery worker, model gateway, Alembic migrations, tests
 frontend/    Angular 22 + Angular Material web app, nginx config
-deploy/      Docker Compose (single file with profiles), observability config
-scripts/     secrets generation, tests, image checks, release bundle
+deploy/      Docker Compose: production/ (published images) and compose/ (build from source), observability config
+scripts/     secrets generation, tests, image checks, release bundle, Docker Hub publishing
 docs/        analysis (requirements, architecture, data model, threat model, roadmap), Docker overview
 ```
 
 ## Documentation
 
 - [Project analysis](docs/analysis/README.md): requirements, architecture and ADRs, data model, threat model, roadmap
+- [Deployment guide](docs/deploy.md): production deployment from Docker Hub
 - [Docker overview](docs/docker.md): images, services, profiles, volumes, operations
 
 ## License
 
 To be defined. Third-party components are under permissive licenses (Angular and Angular Material: MIT;
-Material Symbols: Apache-2.0; Roboto: OFL-1.1; pdf.js: Apache-2.0; SeaweedFS: Apache-2.0; pdfplumber, tree-sitter
+Material Symbols: Apache-2.0; Roboto: OFL-1.1; pdf.js: Apache-2.0; d3-force: ISC; SeaweedFS: Apache-2.0; pdfplumber, tree-sitter
 and its grammars: MIT; trafilatura: Apache-2.0; Pillow: MIT-CMU).

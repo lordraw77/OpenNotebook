@@ -1,0 +1,254 @@
+# OpenNotebook — deployment Compose file (published images, no source tree needed).
+#
+# Put this file and a `.env` in the same directory, then:
+#   docker compose up -d                                   # core stack
+#   docker compose --profile observability up -d           # + Prometheus and Grafana
+#   docker compose --profile auth up -d                    # + Keycloak (OIDC, integration in M5)
+# or set COMPOSE_PROFILES=auth,observability in .env.
+#
+# Images: ${REGISTRY}/opennotebook-{web,api,worker}:${VERSION} (Docker Hub: lordraw/opennotebook-*).
+# Create `.env` from .env.example and fill the secrets: scripts/gen-secrets.sh .env (see docs/deploy.md).
+# No service in any profile runs a model: every model call goes to an external provider.
+
+name: opennotebook
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+x-hardening: &hardening
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop: [ALL]
+
+x-app: &app
+  image: ${REGISTRY:-lordraw}/opennotebook-api:${VERSION:-0.4.0}
+  pull_policy: missing
+  env_file:
+    - path: .env
+      required: true
+  environment:
+    POSTGRES_HOST: postgres
+    QDRANT_URL: http://qdrant:6333
+    REDIS_URL: redis://redis:6379/0
+    S3_ENDPOINT: http://seaweedfs:8333
+  restart: unless-stopped
+  <<: *hardening
+  tmpfs:
+    - /tmp
+  logging: *logging
+  networks: [internal, egress]
+
+services:
+  web:
+    image: ${REGISTRY:-lordraw}/opennotebook-web:${VERSION:-0.4.0}
+    pull_policy: missing
+    ports:
+      - "${WEB_BIND:-0.0.0.0}:${WEB_PORT:-8080}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    <<: *hardening
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+    logging: *logging
+    networks: [internal, public]
+
+  api:
+    <<: *app
+    command: ["api"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+
+  worker:
+    <<: *app
+    image: ${REGISTRY:-lordraw}/opennotebook-worker:${VERSION:-0.4.0}
+    command: ["worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  migrate:
+    <<: *app
+    # Migrations, then idempotent first-start initialization: admin user, storage bucket,
+    # providers from .env keys, model catalog sync and MODEL_* defaults. Runs on every `up`.
+    entrypoint: ["sh", "-c"]
+    command: ["opennotebook migrate && opennotebook bootstrap"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:18.6-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-opennotebook}
+      POSTGRES_USER: ${POSTGRES_USER:-opennotebook}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (scripts/gen-secrets.sh)}
+    volumes:
+      - pg-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    shm_size: 256m
+    logging: *logging
+    networks: [internal]
+
+  qdrant:
+    image: qdrant/qdrant:v1.20.0
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:?set QDRANT_API_KEY in .env (scripts/gen-secrets.sh)}
+      QDRANT__TELEMETRY_DISABLED: "true"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    logging: *logging
+    networks: [internal]
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.52
+    environment:
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:?set S3_ACCESS_KEY in .env (scripts/gen-secrets.sh)}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:?set S3_SECRET_KEY in .env (scripts/gen-secrets.sh)}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        cat > /tmp/s3.json <<EOF
+        {"identities":[{"name":"opennotebook","credentials":[{"accessKey":"$$S3_ACCESS_KEY","secretKey":"$$S3_SECRET_KEY"}],"actions":["Admin","Read","Write","List","Tagging"]}]}
+        EOF
+        exec weed server -dir=/data -ip=seaweedfs -ip.bind=0.0.0.0 -volume.max=0 -master.volumeSizeLimitMB=1024 -s3 -s3.config=/tmp/s3.json
+    volumes:
+      - blob-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9333/cluster/status && wget -q -O /dev/null http://127.0.0.1:8333/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+    logging: *logging
+    networks: [internal]
+
+  redis:
+    image: redis:8.8.4-alpine
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env (scripts/gen-secrets.sh)}
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --appendonly yes --save ''"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    logging: *logging
+    networks: [internal]
+
+  # --- profile: auth ---------------------------------------------------------------------------
+  keycloak:
+    profiles: [auth]
+    image: quay.io/keycloak/keycloak:26.8.1
+    command: ["start-dev", "--http-port=8081"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-}
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "${KEYCLOAK_BIND:-127.0.0.1}:${KEYCLOAK_PORT:-8081}:8081"
+    volumes:
+      - keycloak-data:/opt/keycloak/data
+    restart: unless-stopped
+    logging: *logging
+    networks: [internal, public]
+
+  # --- profile: observability -------------------------------------------------------------------
+  prometheus:
+    profiles: [observability]
+    image: prom/prometheus:v3.15.1
+    configs:
+      - source: prometheus
+        target: /etc/prometheus/prometheus.yml
+    volumes:
+      - prometheus-data:/prometheus
+    ports:
+      - "${PROMETHEUS_BIND:-127.0.0.1}:${PROMETHEUS_PORT:-9090}:9090"
+    restart: unless-stopped
+    logging: *logging
+    networks: [internal, public]
+
+  grafana:
+    profiles: [observability]
+    image: grafana/grafana:13.2.5
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    configs:
+      - source: grafana-datasources
+        target: /etc/grafana/provisioning/datasources/datasources.yml
+    volumes:
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "${GRAFANA_BIND:-127.0.0.1}:${GRAFANA_PORT:-3000}:3000"
+    depends_on: [prometheus]
+    restart: unless-stopped
+    logging: *logging
+    networks: [internal, public]
+
+# Observability configuration inline, so this file needs nothing else from the repository.
+configs:
+  prometheus:
+    content: |
+      global:
+        scrape_interval: 15s
+      scrape_configs:
+        - job_name: opennotebook-api
+          metrics_path: /metrics
+          static_configs:
+            - targets: ["api:8000"]
+  grafana-datasources:
+    content: |
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          type: prometheus
+          access: proxy
+          url: http://prometheus:9090
+          isDefault: true
+
+networks:
+  internal:
+    internal: true # no internet access for databases and storage
+  egress: {} # api/worker reach external model providers and fetch web pages
+  public: {} # published ports
+
+volumes:
+  pg-data:
+  qdrant-data:
+  blob-data:
+  redis-data:
+  keycloak-data:
+  prometheus-data:
+  grafana-data:

@@ -24,6 +24,8 @@ class Retrieved:
     embedding_model: str
     rerank_model: str | None = None
     warnings: list[str] = field(default_factory=list)
+    # chunks added by graph expansion (neighbours of the entities in the retrieved passages)
+    via_graph: set[uuid.UUID] = field(default_factory=set)
 
 
 def retrieval_query(question: str, previous_questions: list[str]) -> str:
@@ -75,4 +77,12 @@ async def retrieve(
             hits = [hits[i] for i in order]
             result.rerank_model = ranked.used.label
     result.hits = diversify(hits, settings.chat_context_chunks, settings.chat_max_per_source)
+    if settings.chat_graph_expansion_chunks > 0 and result.hits:
+        from opennotebook.graph.query import expansion_hits
+
+        extra = await expansion_hits(
+            session, user, scope, [h.chunk.id for h in result.hits], settings.chat_graph_expansion_chunks
+        )
+        result.hits.extend(extra)
+        result.via_graph = {h.chunk.id for h in extra}
     return result

@@ -131,6 +131,11 @@ export interface NotebookOption {
                 @for (c of m.citations; track c.n) {
                   <button type="button" class="src" (click)="openCitation.emit(c)">
                     <span class="n">{{ c.n }}</span>
+                    @if (c.via === 'graph') {
+                      <mat-icon class="via" matTooltip="Found through the knowledge graph"
+                        >hub</mat-icon
+                      >
+                    }
                     <span class="t">{{ c.source_title }}</span>
                     @if (loc(c)) {
                       <span class="muted">{{ loc(c) }}</span>
@@ -357,6 +362,12 @@ export interface NotebookOption {
       color: var(--mat-sys-on-primary-container);
       font-weight: 600;
       font-size: 11px;
+    }
+    .src .via {
+      font-size: 14px;
+      width: 14px;
+      height: 14px;
+      color: var(--mat-sys-tertiary);
     }
     .src .t {
       overflow: hidden;

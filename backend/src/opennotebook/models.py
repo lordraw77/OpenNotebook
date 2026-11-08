@@ -328,6 +328,10 @@ class Source(TimestampMixin, Base):
     summary_status: Mapped[str | None] = mapped_column(String(20))
     summary_model: Mapped[str | None] = mapped_column(String(400))
     summary_error: Mapped[str | None] = mapped_column(Text)
+    # Knowledge graph extraction: pending | done | failed | skipped
+    graph_status: Mapped[str | None] = mapped_column(String(20))
+    graph_model: Mapped[str | None] = mapped_column(String(400))
+    graph_error: Mapped[str | None] = mapped_column(Text)
 
 
 class SourceBlob(Base):
@@ -424,3 +428,66 @@ class Message(Base):
     latency_ms: Mapped[int | None] = mapped_column(Integer)
     error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Entity(TimestampMixin, Base):
+    """A named thing in a project's knowledge graph, deduplicated by its canonical name.
+
+    Entities hold no text of their own: names come from mentions, and descriptions live on each mention, so
+    what a user sees is always derived from the chunks they are allowed to read (threat T1).
+    """
+
+    __tablename__ = "entities"
+    __table_args__ = (UniqueConstraint("project_id", "canonical", name="uq_entities_project_canonical"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"), index=True)
+    canonical: Mapped[str] = mapped_column(String(300))
+    name: Mapped[str] = mapped_column(String(300))
+    type: Mapped[str] = mapped_column(String(40), default="concept")
+
+
+class EntityMention(Base):
+    __tablename__ = "entity_mentions"
+
+    entity_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("entities.id", ondelete="CASCADE"), primary_key=True
+    )
+    chunk_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("chunks.id", ondelete="CASCADE"), primary_key=True)
+    source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sources.id", ondelete="CASCADE"), index=True)
+    # surface form and what this passage says about the entity
+    name: Mapped[str] = mapped_column(String(300))
+    description: Mapped[str | None] = mapped_column(Text)
+
+
+class Relation(Base):
+    __tablename__ = "relations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"), index=True)
+    src_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("entities.id", ondelete="CASCADE"), index=True)
+    dst_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("entities.id", ondelete="CASCADE"), index=True)
+    type: Mapped[str] = mapped_column(String(60))
+    description: Mapped[str | None] = mapped_column(Text)
+    # the passage that states the relation; visibility follows its source
+    chunk_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("chunks.id", ondelete="CASCADE"))
+    source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sources.id", ondelete="CASCADE"), index=True)
+
+
+class WikiPage(Base):
+    """Generated wiki text for an entity, cached per set of visible sources (`basis`).
+
+    Two users who can read the same sources share the page; anyone else gets a page generated from what they
+    can read.
+    """
+
+    __tablename__ = "wiki_pages"
+    __table_args__ = (UniqueConstraint("entity_id", "basis", name="uq_wiki_entity_basis"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    entity_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("entities.id", ondelete="CASCADE"), index=True)
+    basis: Mapped[str] = mapped_column(String(64))  # sha256 of the sorted chunk ids used
+    body_md: Mapped[str] = mapped_column(Text)
+    citations: Mapped[list] = mapped_column(JSONB, default=list)
+    model_label: Mapped[str | None] = mapped_column(String(400))
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

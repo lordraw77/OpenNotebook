@@ -24,6 +24,7 @@ class Block:
     char_end: int = 0
     line_start: int = 0  # 1-based, in the document text
     line_end: int = 0
+    symbol_kind: str | None = None  # source code: function | class | struct | interface | ...
 
 
 @dataclass
@@ -39,6 +40,8 @@ class ParsedDocument:
     # PDF pages without a text layer (candidates for OCR)
     scanned_pages: list[int] = field(default_factory=list)
     language: str | None = None
+    # source code: members of small classes, not blocks of their own (parent, name, kind, start, end)
+    symbols: list[tuple[str, str, str, int, int]] = field(default_factory=list)
 
     @property
     def text(self) -> str:

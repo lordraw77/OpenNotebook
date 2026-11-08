@@ -177,6 +177,11 @@ Implemented in migration `0004` (M3): `sources.summary`, `suggested_questions`, 
 `parent_source_id` (archive members, crawled pages). Archive manifests, web fetch details and crawl settings live
 in `sources.metadata` (`archive`, `final_url`, `content_type`, `fetched_at`, `crawl`). Web sources store
 `sha256("url:" + normalized URL)` as `content_sha256`, so the notebook-level uniqueness deduplicates URLs.
+Implemented in migration `0005` (M4): `entities` (project, canonical name unique per project, name, type; no
+description: it lives on mentions), `entity_mentions` (entity, chunk, source, surface name, description),
+`relations` (src, dst, type, description, evidence chunk and source), `wiki_pages` (entity, `basis` = hash of the
+passages used, body, citations), and `sources.graph_status` / `graph_model` / `graph_error`. Mentions and relations
+cascade with their chunks; visibility is derived from the evidence source (see architecture §4.2).
 The other tables arrive with their milestone.
 
 ## 3. Scope and permission rules

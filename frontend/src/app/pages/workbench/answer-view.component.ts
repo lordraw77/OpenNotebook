@@ -120,10 +120,10 @@ import { Inline, parseAnswer } from './answer-render';
     .cite {
       display: inline-grid;
       place-items: center;
-      min-width: 20px;
-      height: 20px;
-      padding: 0 5px;
-      margin: 0 1px;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 4px;
+      margin: 0 0 0 2px;
       border: 0;
       border-radius: 10px;
       background: var(--mat-sys-primary-container);

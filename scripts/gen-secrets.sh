@@ -6,8 +6,15 @@ set -euo pipefail
 ENV_FILE="${1:-.env}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+# Template: the repository's .env.example, or one next to this script / in the current directory
+# (deployments that downloaded only deploy/production/ files).
+TEMPLATE="$ROOT/.env.example"
+for candidate in "$TEMPLATE" "$(dirname "$0")/.env.example" ./.env.example; do
+  [[ -f "$candidate" ]] && TEMPLATE="$candidate" && break
+done
+
 if [[ ! -f "$ENV_FILE" ]]; then
-  cp "$ROOT/.env.example" "$ENV_FILE"
+  cp "$TEMPLATE" "$ENV_FILE"
   chmod 600 "$ENV_FILE"
   echo "created $ENV_FILE from .env.example"
 fi

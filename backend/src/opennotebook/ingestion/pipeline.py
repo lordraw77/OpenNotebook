@@ -194,14 +194,20 @@ async def ingest_source(
         source.status = SourceStatus.ready
         job.status = "succeeded"
         job.finished_at = datetime.now(UTC)
+        from opennotebook.graph.extract import wants_graph
         from opennotebook.ingestion.summary import wants_summary
 
         summarize = wants_summary(source)
         if summarize:
             source.summary_status = "pending"
+        graph = wants_graph(source)
+        if graph:
+            source.graph_status = "pending"
         await session.commit()
         if summarize:
             queue.enqueue_summary(source.id)
+        if graph:
+            queue.enqueue_graph(source.id)
         return SourceStatus.ready
 
     except TransientFetchError as exc:
@@ -274,9 +280,15 @@ async def purge_source(
     for blob in (await session.scalars(select(SourceBlob).where(SourceBlob.source_id == source.id))).all():
         await store.delete(blob.object_key)
     await session.execute(delete(SourceBlob).where(SourceBlob.source_id == source.id))
+    from opennotebook.graph.store import clear_source, drop_orphans
+
+    await clear_source(session, source.id)
     await session.execute(delete(Chunk).where(Chunk.source_id == source.id))
     source.chunk_count = 0
     source.vector_collection = None
+    notebook = await session.get(Node, source.notebook_id)
+    if notebook is not None:
+        await drop_orphans(session, uuid.UUID(node_ids_from_path(notebook.path)[0]))
     await session.commit()
 
 

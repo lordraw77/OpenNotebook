@@ -230,3 +230,34 @@ async def reindex_project(project_id: uuid.UUID, user: CurrentUser, session: Ses
     for sid in ids:
         queue.enqueue_ingestion(sid, "reindex")
     return {"queued": len(ids)}
+
+
+@router.post("/projects/{project_id}/graph")
+async def rebuild_project_graph(project_id: uuid.UUID, user: CurrentUser, session: SessionDep) -> dict:
+    """Re-extract the knowledge graph of every ready source (no re-embedding), e.g. after configuring or
+    changing the graph extraction model. Requires the owner role on the project."""
+    from opennotebook.acl import get_node_for
+    from opennotebook.graph.extract import wants_graph
+    from opennotebook.ingestion import queue
+    from opennotebook.models import GrantRole, Node
+
+    project, _ = await get_node_for(session, user, project_id, GrantRole.owner)
+    sources = (
+        await session.scalars(
+            select(Source)
+            .join(Node, Node.id == Source.notebook_id)
+            .where(
+                Node.path.op("<@")(project.path),
+                Source.deleted_at.is_(None),
+                Source.status == SourceStatus.ready,
+            )
+        )
+    ).all()
+    queued = [s for s in sources if wants_graph(s)]
+    for s in queued:
+        s.graph_status = "pending"
+        s.graph_error = None
+    await session.commit()
+    for s in queued:
+        queue.enqueue_graph(s.id)
+    return {"queued": len(queued)}

@@ -30,6 +30,8 @@ export interface SourceDto {
   suggested_questions: string[];
   summary_status: 'pending' | 'done' | 'failed' | 'skipped' | null;
   summary_error: string | null;
+  graph_status: 'pending' | 'done' | 'failed' | 'skipped' | null;
+  graph_error: string | null;
   details: {
     archive?: {
       format: string;
@@ -114,6 +116,8 @@ export interface Citation {
   text?: string;
   excerpt?: string;
   score?: number;
+  /** how the passage reached the chat context */
+  via?: 'search' | 'graph';
 }
 
 /** "p. 4", "pp. 4–5", "lines 10–24" or "" — the model never writes these, the client does. */
@@ -303,6 +307,12 @@ export class SourcesApi {
 
   ingestionStatus(): Promise<IngestionStatus> {
     return firstValueFrom(this.http.get<IngestionStatus>('/api/ingestion/status'));
+  }
+
+  rebuildProjectGraph(projectId: string): Promise<{ queued: number }> {
+    return firstValueFrom(
+      this.http.post<{ queued: number }>(`/api/ingestion/projects/${projectId}/graph`, {}),
+    );
   }
 
   reindexProject(projectId: string): Promise<{ queued: number }> {

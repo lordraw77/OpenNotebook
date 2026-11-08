@@ -1,5 +1,5 @@
 import { NgTemplateOutlet } from '@angular/common';
-import { Component, DestroyRef, computed, effect, inject, signal } from '@angular/core';
+import { Component, DestroyRef, computed, effect, inject, input, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
@@ -70,6 +70,9 @@ export class WorkbenchComponent {
   private readonly dialog = inject(MatDialog);
   private readonly snack = inject(MatSnackBar);
 
+  /** Deep link /workbench?source=<id> (e.g. from a wiki citation) opens that source. */
+  readonly source = input<string | undefined>();
+
   readonly nodes = signal<TreeNodeDto[]>([]);
   readonly sources = signal<SourceDto[]>([]);
   readonly tree = computed(() => buildTree(this.nodes(), this.sources()));
@@ -136,6 +139,8 @@ export class WorkbenchComponent {
     try {
       this.nodes.set(await this.api.nodes());
       await this.reloadSources(false);
+      const wanted = this.source();
+      if (wanted && !this.selectedSourceId()) this.openSource(wanted);
     } catch (err) {
       this.toast(errorMessage(err));
     }

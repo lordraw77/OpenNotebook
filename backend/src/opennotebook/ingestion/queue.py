@@ -25,3 +25,7 @@ def enqueue_refresh_ancestors(node_id: uuid.UUID) -> None:
 
 def enqueue_summary(source_id: uuid.UUID) -> None:
     _send("opennotebook.summarize_source", [str(source_id)], "summary")
+
+
+def enqueue_graph(source_id: uuid.UUID) -> None:
+    _send("opennotebook.extract_graph", [str(source_id)], "graph")
