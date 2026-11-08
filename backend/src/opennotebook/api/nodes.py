@@ -23,7 +23,8 @@ from sqlalchemy.exc import IntegrityError
 from opennotebook.acl import get_node_for, visible_nodes
 from opennotebook.config import get_settings
 from opennotebook.deps import CurrentUser, SessionDep, audit
-from opennotebook.models import GrantRole, Group, Node, NodeGrant, NodeKind, User
+from opennotebook.ingestion import queue
+from opennotebook.models import GrantRole, Group, Node, NodeGrant, NodeKind, Source, User
 
 router = APIRouter(prefix="/api/nodes", tags=["nodes"])
 
@@ -162,8 +163,10 @@ async def update_node(
     node, role = await get_node_for(session, user, node_id, GrantRole.editor)
     changes = body.model_dump(exclude_unset=True)
 
+    moved = False
     if "parent_id" in changes and changes["parent_id"] != node.parent_id:
         await _move(session, user, node, body.parent_id)
+        moved = True
     if body.name is not None and body.name.strip() != node.name:
         node.name = body.name.strip()
         node.slug = slugify(body.name)
@@ -181,6 +184,8 @@ async def update_node(
         raise HTTPException(status.HTTP_409_CONFLICT, "A sibling with the same name already exists") from exc
     audit(session, user, "node.update", "node", node.id, **{k: str(v) for k, v in changes.items()})
     await session.commit()
+    if moved:
+        queue.enqueue_refresh_ancestors(node.id)
     await session.refresh(node)
     return to_out(node, role)
 
@@ -228,8 +233,18 @@ async def delete_node(node_id: uuid.UUID, user: CurrentUser, session: SessionDep
         .where(Node.path.op("<@")(node.path), Node.deleted_at.is_(None))
         .values(deleted_at=now, slug=func.concat(Node.slug, "~", func.substr(cast(Node.id, String), 1, 8)))
     )
-    audit(session, user, "node.delete", "node", node.id, name=node.name)
+    source_ids = (
+        await session.scalars(
+            select(Source.id)
+            .join(Node, Node.id == Source.notebook_id)
+            .where(Node.path.op("<@")(node.path), Source.deleted_at.is_(None))
+        )
+    ).all()
+    await session.execute(update(Source).where(Source.id.in_(source_ids)).values(deleted_at=now))
+    audit(session, user, "node.delete", "node", node.id, name=node.name, sources=len(source_ids))
     await session.commit()
+    for sid in source_ids:
+        queue.enqueue_purge(sid)
 
 
 # --- grants -----------------------------------------------------------------------------------

@@ -6,9 +6,12 @@ Upload documents, source code, archives, images, web pages and notes, organize t
 **Project → Workspace → Notebook** tree, and chat with an LLM that answers **only** from the sources in the selected
 scope. Every claim cites its source (`[Source 1, p. 4]`), and clicking a citation highlights the exact passage.
 
-> **Status: milestone M0 (foundations) complete.** Runs today: the packaged stack, login, the hierarchy with sharing
-> and on/off switches, the provider registry for nine providers, and model selection per phase (global and per
-> project). Ingestion (M1) and grounded chat (M2) are next. See the [roadmap](docs/analysis/05-roadmap-and-decisions.md).
+> **Status: milestones M0 (foundations), M1 (ingestion) and M2 (grounded chat) complete.** Runs today: the packaged
+> stack, login, the hierarchy with sharing and on/off switches, the provider registry for nine providers, model
+> selection per phase (global and per project), upload and indexing of PDF/DOCX/Markdown/text and notes, scoped
+> hybrid search, and grounded chat with streaming answers, validated citations, provider fallback and a source
+> viewer that highlights the cited passage. Extended ingestion (M3) is next.
+> See the [roadmap](docs/analysis/05-roadmap-and-decisions.md).
 
 ## Features
 
@@ -20,8 +23,10 @@ scope. Every claim cites its source (`[Source 1, p. 4]`), and clicking a citatio
 | Providers: Groq, OpenRouter, Gemini, Cloudflare Workers AI, Cerebras, Mistral, NVIDIA, Hugging Face, Ollama | ✅ M0 |
 | Model catalog sync with capability detection, per-model test, encrypted keys | ✅ M0 |
 | Model selection per phase with fallback chains; per-project overrides; chat model selector | ✅ M0 |
-| Ingestion of PDF, TXT, Markdown, DOCX, notes; chunking; embeddings; hybrid index | M1 |
-| Grounded chat with validated, clickable citations and highlighting | M2 |
+| Light and dark theme (follows the system, or chosen from the top bar); responsive header | ✅ M1 |
+| Ingestion of PDF, TXT, Markdown, DOCX and notes; structure-aware chunking; embeddings per project; hybrid search with ACL pre-filter | ✅ M1 |
+| Grounded chat: streaming answers, strict prompt, validated clickable citations, provider fallback, optional rerank, conversations, save answer as note | ✅ M2 |
+| Source viewer: PDF page with the cited passage highlighted (pdf.js), text sources with the passage marked | ✅ M2 |
 | Archives, source code, images (OCR + description), web pages, summaries | M3 |
 | Knowledge graph and wiki pages | M4 |
 | Deep research mode, OIDC, per-project provider policy | M5 |
@@ -65,7 +70,9 @@ Then, in the UI:
 
 1. **Settings → Providers**: check each provider, enable the models you want, use **Test** on them.
 2. **Settings → Models**: set the chain for each phase (global defaults, or per project).
-3. **Workbench**: create a project, nest workspaces and notebooks, share them, pick the chat model.
+3. **Workbench**: create a project, nest workspaces and notebooks, share them, upload sources.
+4. Select a scope in the tree, pick the chat model and ask: every statement of the answer carries a citation
+   chip; clicking it opens the source at the cited passage. **Save as note** keeps an answer with its citations.
 
 Operations, profiles and volumes: [docs/docker.md](docs/docker.md).
 
@@ -76,6 +83,10 @@ Operations, profiles and volumes: [docs/docker.md](docs/docker.md).
 - **Global defaults** are set by administrators; **project owners** can override any phase for their project,
   including a different embedding model. Embedding never falls back (vectors from different models do not mix).
 - In the Workbench each user can choose the chat model among the enabled ones; the project chain is the default.
+  If the chosen model fails before answering, the next model of the chain answers and the message shows which
+  model was used.
+- **Rerank** is optional: when a rerank model is assigned (NVIDIA, Cloudflare, Hugging Face, …) the retrieved
+  passages are reordered before they reach the chat model; if it fails, the fusion order is kept.
 
 ## Development
 
@@ -111,4 +122,4 @@ docs/        analysis (requirements, architecture, data model, threat model, roa
 ## License
 
 To be defined. Third-party components are under permissive licenses (Angular and Angular Material: MIT;
-Material Symbols: Apache-2.0; Roboto: OFL-1.1; SeaweedFS: Apache-2.0).
+Material Symbols: Apache-2.0; Roboto: OFL-1.1; pdf.js: Apache-2.0; SeaweedFS: Apache-2.0).

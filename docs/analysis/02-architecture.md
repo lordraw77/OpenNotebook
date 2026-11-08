@@ -101,7 +101,8 @@ upload / URL / note
    +- archive -> [unpack sandbox] limits: total uncompressed size, compression ratio, file count, depth;
    |              path normalization (no traversal, no links) -> N child sources -> back to [intake]
    v
-[parse]    PDF -> PyMuPDF (text blocks, pages, bboxes, reading order) + pdfplumber (tables); no ML layout models
+[parse]    PDF -> pdfplumber/pdfminer.six (words, lines, font sizes, bboxes, tables; MIT); no ML layout models
+           (PyMuPDF is not used: AGPL license, see NFR-12); headings detected from font size
            pages with no text layer (scans) -> rendered to image -> [ocr]
            DOCX/PPTX -> python-docx / python-pptx (structure) + LibreOffice -> PDF (for page anchors)
            HTML -> trafilatura
@@ -118,10 +119,13 @@ upload / URL / note
 [document model]  unified representation: blocks {type, text, page, bbox, heading_path, lines}
    v
 [chunk]    structural (sections/paragraphs/tables/functions) + token limit + overlap (default 512 / 64 tokens)
+           units = sentences inside blocks; a chunk is always a contiguous slice of the document text
+           (exact char offsets, lines, pages, bboxes); tokens estimated as max(words, chars/4) - no tokenizer model
            contextual header "Source > Section > Subsection" prepended to the embedded text
    v
-[embed]    dense vector from the external embedding provider -> Qdrant
-           sparse BM25 vector computed algorithmically (tokenizer + term statistics, no model) -> Qdrant
+[embed]    dense vector from the project's embedding model (batches of EMBED_BATCH_SIZE) -> Qdrant
+           collection `chunks__<model id>`: one per embedding model, so projects with different models never mix
+           sparse BM25 vector computed algorithmically (hashed terms, saturated TF; IDF applied by Qdrant) -> Qdrant
            text -> Postgres (FTS)
    v
 [graph]    entity/relation extraction with LLM (+ symbols/imports from tree-sitter for code, no LLM)
@@ -169,13 +173,53 @@ The web client turns `[S3]` into `[Source 3, p. 4]` using stored metadata: the m
 **Advanced modes** (CHT-05): an agent with read-only tools `search(scope, query)`, `graph_neighbors(entity)`, `open_source(source_id, range)`,
 a bounded step budget, and a final report whose citations are validated as above.
 
+### 4.1 Implementation status (M2)
+
+Implemented:
+
+- **Retrieval**: hybrid search (dense + BM25, RRF fusion inside Qdrant) with the ACL / switch pre-filter, scoped to
+  any node (`POST /api/search`, Workbench search mode). The query embedding uses `SEARCH_TIMEOUT_S`, so a slow
+  provider fails fast with a readable error.
+- **Query planning (simple)**: a short follow-up question (< 8 words) is searched together with the previous
+  question; there is no LLM rewrite yet.
+- **Rerank**: when the `rerank` phase has a model, the `CHAT_CANDIDATES` passages are reordered through LiteLLM
+  (`arerank`: NVIDIA NIM, Hugging Face, …) or the Workers AI `/ai/run` endpoint for Cloudflare. A failure or
+  timeout (`RERANK_TIMEOUT_S`) keeps the fusion order and is reported on the message.
+- **Diversification**: at most `CHAT_MAX_PER_SOURCE` passages per source, `CHAT_CONTEXT_CHUNKS` in total.
+- **Context and prompt**: numbered `<source id="Sn" title location section>` blocks. Attribute values are escaped,
+  and `<source`/`</source` inside passage text are neutralized, so a document cannot close or forge a block.
+  System prompt as above (rules 1–5). History: the last `CHAT_HISTORY_MESSAGES` turns, as plain text with markers
+  removed, because passage numbers are per question.
+- **Abstention without a model call**: when the scope has no matching passage, the answer is the fixed
+  "not found" sentence.
+- **Streaming with fallback** (`ModelGateway.stream_chat`): each model of the chain gets
+  `CHAT_FIRST_TOKEN_TIMEOUT_S` to produce its first token; failures before that move to the next model. After
+  text has been streamed, an error ends the answer with status `error` and keeps the partial text. The event
+  stream is `POST /api/conversations/{id}/messages` (`text/event-stream`): `message`, `status`, `sources`,
+  `provider`, `token`, `done`, `error`.
+- **Post-check** (`chat/citations.py`): marker groups (`[S1, S3]`, `[Source 2]`) are normalized to `[S1][S3]`.
+  Numbers outside the passages given are removed and listed (`invalid_citations`). Sentences of six or more words
+  without a marker are counted (`uncited_sentences`), and abstentions are detected (English and Italian). There is
+  no judge-model groundedness check yet.
+- **Persistence**: user and assistant messages are stored with the passages given (`context`), the citations
+  used, the checks, the model actually used and every attempt, usage and latency. When the client disconnects
+  (Stop button), the partial answer is saved with status `stopped`; the write is shielded from cancellation.
+- **Notes from answers**: `POST /api/nodes/{notebook}/notes` with `from_message_id` copies the stored answer and
+  its citations server side. The client cannot forge citations, and only the owner of the conversation can do
+  this.
+
+Not yet: graph expansion (M4), LLM query rewriting and decomposition (advanced mode, M5), and a judge-model
+groundedness check.
+Ingestion runs in the Celery worker (`opennotebook.ingest_source`); provider errors are retried with exponential
+backoff up to `INGESTION_MAX_ATTEMPTS`, parse errors fail immediately.
+
 ## 5. Highlighting in the source
 
 | Type | Anchor stored on the chunk | Rendering |
 |---|---|---|
-| PDF | page + list of bboxes (from PyMuPDF) | pdf.js with rectangle overlay |
+| PDF | page + list of bboxes in PDF points, top-left origin (from pdfplumber) + page sizes | pdf.js (lazy-loaded, worker served from `/pdfjs/`, WASM disabled for the CSP) with rectangle overlay ✅ M2 |
 | DOCX/PPTX | converted to PDF (LibreOffice headless, in the worker image) at ingestion → as PDF | pdf.js |
-| Text / Markdown / note / web | character offsets on normalized text | text viewer with `<mark>` |
+| Text / Markdown / note / web | character offsets on normalized text (`GET /api/sources/{id}/text`) | text viewer with `<mark>` ✅ M2 |
 | Code | start/end lines | code viewer with highlighted lines |
 | Image | OCR bboxes | overlay on the image |
 
@@ -240,7 +284,7 @@ a bounded step budget, and a final report whose citations are validated as above
 
 ### ADR-008 — No models inside the stack
 **Context**: the project must not contain or run any model; all LLMs and other models are external.
-**Decision**: every model phase (chat, summary, graph extraction, vision, OCR, embedding, rerank) is delegated to external providers through the model gateway. Parsing uses deterministic libraries only (PyMuPDF, pdfplumber, python-docx, trafilatura, tree-sitter); lexical/sparse search uses algorithmic BM25. Ollama is treated as an external provider at `OLLAMA_API_BASE`, never deployed by the stack.
+**Decision**: every model phase (chat, summary, graph extraction, vision, OCR, embedding, rerank) is delegated to external providers through the model gateway. Parsing uses deterministic libraries only (pdfplumber, python-docx, trafilatura, tree-sitter); lexical/sparse search uses algorithmic BM25. Ollama is treated as an external provider at `OLLAMA_API_BASE`, never deployed by the stack.
 **Consequences**: small images, no GPU requirements, simple operations. The stack needs network access to providers; ingestion speed and cost depend on them, so the pipeline is built around queues, batching, retries, fallbacks and visible progress. Scanned documents cost one OCR call per page. Data leaves the infrastructure unless a LAN provider (Ollama) is used, which is covered by the per-project provider policy (threat model T9).
 
 ### ADR-011 — UI library: Angular Material (not PrimeNG)

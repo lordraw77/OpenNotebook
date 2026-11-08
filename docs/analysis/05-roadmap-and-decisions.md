@@ -7,8 +7,8 @@
 | Milestone | Content | Verifiable result |
 |---|---|---|
 | **M0 — Foundations** ✅ (2026-11-05) | Monorepo (`backend/`, `frontend/`, `deploy/`, `docs/`), Dockerfiles for every service, Compose stack, Makefile, FastAPI + Alembic + `migrate` job, Angular + PrimeNG skeleton, local auth, CI (lint, test, image build). | `make up` starts the stack on a clean host; all health checks green; login works (US-10 partially). |
-| **M1 — Hierarchy, providers, basic ingestion** | Nodes + ACL, provider registry for the 9 providers, per-phase assignment with fallback, PDF/TXT/MD/DOCX upload, manual notes, PyMuPDF parsing, chunking, external embeddings + BM25 sparse vectors, Qdrant, SeaweedFS, Upload page and minimal RAG Status page. | A source reaches `ready` with visible chunks; "Test connection" passes for each configured provider. |
-| **M2 — Grounded chat** | Hybrid retrieval + rerank, scope and switches, strict prompt, validated citations, SSE, PDF/text viewer with highlighting, 3-column Workbench, save answer as note. | US-01, US-02, US-03, US-09 pass. |
+| **M1 — Hierarchy, providers, basic ingestion** ✅ (2026-11-06) | Nodes + ACL, provider registry for the 9 providers, per-phase assignment with fallback, PDF/TXT/MD/DOCX upload, manual notes, pdfplumber parsing, chunking, external embeddings + BM25 sparse vectors, Qdrant, SeaweedFS, Upload page and minimal RAG Status page. | A source reaches `ready` with visible chunks; "Test connection" passes for each configured provider. |
+| **M2 — Grounded chat** ✅ (2026-11-06) | Hybrid retrieval + rerank, scope and switches, strict prompt, validated citations, SSE, PDF/text viewer with highlighting, 3-column Workbench, save answer as note. | US-01, US-02, US-03, US-09 pass. |
 | **M3 — Extended ingestion** | Archives (hardened), code (tree-sitter), images (OCR + vision), web scraping (SSRF-safe), summary and suggested questions. | US-04, US-05, US-06 pass. |
 | **M4 — Graph and wiki** | Entity/relation extraction, code graph, graph-based retrieval expansion, navigable wiki pages, graph view. | Multi-hop questions improve on the eval set. |
 | **M5 — Advanced research and administration** | Multi-step agent / cited report, encrypted key management UI, groups and full permissions, OIDC, per-project provider policy. | US-07, US-08 pass. |
@@ -30,6 +30,25 @@ Continuous RAG quality evaluation from M2: a question/expected-answer dataset pe
 | R9 | **D11 resolved**: `.gitignore` rewritten for OpenNotebook; backend package `opennotebook`. |
 | R10 | UI library: Angular 22 + Angular Material instead of PrimeNG, because PrimeNG ≥ 22 requires a commercial license key (ADR-011). |
 | R6 | Ollama is only the user's external test instance on the LAN (slow, CPU-only); the stack never deploys Ollama. It is not in the default fallback chains. |
+
+## 2.1 Known limitations after M1
+
+- Re-indexing after an embedding change is per source, not an atomic switch: until a source is re-indexed it is not
+  found by searches that use the new model (US-08 atomic alias switch is deferred to M6). The RAG Status page shows
+  the sources that need re-indexing and offers a per-project re-index.
+- DOCX and Markdown sources carry character offsets and lines, not pages: their citations open the text viewer.
+  DOCX → PDF conversion for page anchors is moved to M3, together with LibreOffice in the worker image.
+- Scanned PDF pages (no text layer) are reported as a warning; OCR arrives in M3.
+
+## 2.2 Known limitations after M2
+
+- Follow-up questions are not rewritten by a model: a short follow-up is searched together with the previous
+  question. Rewriting and decomposition come with the advanced mode (M5).
+- Groundedness is checked structurally (valid markers, uncited sentences, abstention), not by a judge model.
+- Citations of a chunk that spans several PDF pages open its first page; the pager shows the other pages, and
+  their boxes are highlighted too.
+- The automated RAG quality evaluation (recall@k, citation accuracy, abstention rate on a fixed corpus) is still
+  to be built; the M2 tests cover the mechanics with scripted models, plus a manual check on real providers.
 
 ## 3. Open decisions
 

@@ -25,6 +25,30 @@ class Settings(BaseSettings):
     # Hierarchy
     node_max_depth: int = 16
 
+    # Ingestion
+    upload_max_mb: int = 500
+    chunk_size_tokens: int = 512
+    chunk_overlap_tokens: int = 64
+    embed_batch_size: int = 32
+    ingestion_max_attempts: int = 5
+    # Interactive calls (search, chat) must not wait for slow providers as long as background jobs do
+    search_timeout_s: int = 30
+
+    # Grounded chat
+    # passages retrieved by hybrid search before rerank / diversification
+    chat_candidates: int = 40
+    # passages given to the chat model
+    chat_context_chunks: int = 10
+    # at most this many passages from the same source (diversification)
+    chat_max_per_source: int = 4
+    # previous messages sent with a question
+    chat_history_messages: int = 6
+    chat_max_tokens: int = 2048
+    # interactive rerank call; on timeout or error the fusion order is kept
+    rerank_timeout_s: int = 20
+    # time allowed for the chat model to start answering before the next model of the chain is tried
+    chat_first_token_timeout_s: int = 60
+
     # Providers
     provider_timeout_s: int = 60
     ollama_timeout_s: int = 600
@@ -40,6 +64,8 @@ class Settings(BaseSettings):
     # Other services
     qdrant_url: str = "http://qdrant:6333"
     qdrant_api_key: str = ""
+    # ":memory:" runs Qdrant in-process (tests only)
+    qdrant_location: str | None = None
     redis_url: str = "redis://redis:6379/0"
     redis_password: str = ""
 

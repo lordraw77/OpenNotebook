@@ -1,4 +1,4 @@
-"""ORM models (milestone M0: identity, hierarchy, permissions, model providers, audit)."""
+"""ORM models: identity, hierarchy, permissions, model providers, audit (M0); sources, chunks, notes (M1)."""
 
 from __future__ import annotations
 
@@ -7,8 +7,10 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
+    Computed,
     DateTime,
     Enum,
     ForeignKey,
@@ -21,7 +23,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from opennotebook.db import Base, Ltree
@@ -237,3 +239,181 @@ class AuditLog(Base):
     target_type: Mapped[str] = mapped_column(String(50))
     target_id: Mapped[str | None] = mapped_column(String(100))
     details: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+
+class SourceKind(enum.StrEnum):
+    file = "file"
+    code = "code"
+    image = "image"
+    web = "web"
+    note = "note"
+    archive = "archive"
+
+
+class SourceStatus(enum.StrEnum):
+    queued = "queued"
+    parsing = "parsing"
+    chunking = "chunking"
+    embedding = "embedding"
+    ready = "ready"
+    failed = "failed"
+
+
+TERMINAL_STATUSES = {SourceStatus.ready, SourceStatus.failed}
+
+
+class Note(TimestampMixin, Base):
+    """User note in a notebook. When `indexed`, a source of kind `note` mirrors it in the index."""
+
+    __tablename__ = "notes"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    notebook_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(300))
+    body_md: Mapped[str] = mapped_column(Text, default="")
+    origin: Mapped[str] = mapped_column(String(20), default="manual")  # manual | chat
+    citations: Mapped[list] = mapped_column(JSONB, default=list)
+    indexed: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+
+
+class Source(TimestampMixin, Base):
+    __tablename__ = "sources"
+    __table_args__ = (
+        Index(
+            "uq_sources_notebook_hash",
+            "notebook_id",
+            "content_sha256",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL AND kind <> 'note'"),
+        ),
+        Index("ix_sources_status_open", "status", postgresql_where=text("status NOT IN ('ready','failed')")),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    notebook_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"), index=True)
+    parent_source_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("sources.id", ondelete="CASCADE"))
+    note_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("notes.id", ondelete="SET NULL"), unique=True
+    )
+    kind: Mapped[SourceKind] = mapped_column(_enum(SourceKind, "source_kind"))
+    title: Mapped[str] = mapped_column(String(500))
+    original_path: Mapped[str | None] = mapped_column(Text)
+    uri: Mapped[str | None] = mapped_column(Text)
+    mime_type: Mapped[str | None] = mapped_column(String(200))
+    language: Mapped[str | None] = mapped_column(String(50))
+    content_sha256: Mapped[bytes] = mapped_column(LargeBinary)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[SourceStatus] = mapped_column(
+        _enum(SourceStatus, "source_status"), default=SourceStatus.queued
+    )
+    error: Mapped[dict | None] = mapped_column(JSONB)
+    warnings: Mapped[list] = mapped_column(JSONB, default=list)
+    pipeline_version: Mapped[str | None] = mapped_column(String(20))
+    embedding_model_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("provider_models.id", ondelete="SET NULL")
+    )
+    vector_collection: Mapped[str | None] = mapped_column(String(200))
+    chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    page_count: Mapped[int | None] = mapped_column(Integer)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class SourceBlob(Base):
+    __tablename__ = "source_blobs"
+
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("sources.id", ondelete="CASCADE"), primary_key=True
+    )
+    role: Mapped[str] = mapped_column(String(30), primary_key=True)  # original | text
+    object_key: Mapped[str] = mapped_column(Text)
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
+    content_type: Mapped[str] = mapped_column(String(200))
+
+
+class Chunk(Base):
+    __tablename__ = "chunks"
+    __table_args__ = (
+        UniqueConstraint("source_id", "ordinal", name="uq_chunks_source_ordinal"),
+        Index("ix_chunks_tsv", "tsv", postgresql_using="gin"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sources.id", ondelete="CASCADE"), index=True)
+    ordinal: Mapped[int] = mapped_column(Integer)
+    text: Mapped[str] = mapped_column(Text)
+    heading_path: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
+    page_start: Mapped[int | None] = mapped_column(Integer)
+    page_end: Mapped[int | None] = mapped_column(Integer)
+    bboxes: Mapped[list | None] = mapped_column(JSONB)
+    char_start: Mapped[int] = mapped_column(Integer)
+    char_end: Mapped[int] = mapped_column(Integer)
+    line_start: Mapped[int | None] = mapped_column(Integer)
+    line_end: Mapped[int | None] = mapped_column(Integer)
+    token_count: Mapped[int] = mapped_column(Integer)
+    block_type: Mapped[str] = mapped_column(String(30), default="text")
+    tsv = mapped_column(TSVECTOR, Computed("to_tsvector('simple', text)", persisted=True), nullable=True)
+
+
+class IngestionJob(Base):
+    __tablename__ = "ingestion_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sources.id", ondelete="CASCADE"), index=True)
+    reason: Mapped[str] = mapped_column(String(30), default="upload")  # upload | reindex | retry | note
+    status: Mapped[str] = mapped_column(String(20), default="queued")  # queued | running | succeeded | failed
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    provider_model: Mapped[str | None] = mapped_column(String(400))
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Conversation(TimestampMixin, Base):
+    """A chat thread of one user, bound to a scope node (project, workspace or notebook)."""
+
+    __tablename__ = "conversations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    scope_node_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(300), default="New chat")
+
+
+class Message(Base):
+    """One turn of a conversation.
+
+    Assistant messages keep the passages given to the model (`context`, numbered S1..Sn) and the validated
+    citations actually used, so citations stay resolvable even if a source is later re-indexed or deleted.
+    """
+
+    __tablename__ = "messages"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(20))  # user | assistant
+    content: Mapped[str] = mapped_column(Text, default="")
+    # complete | error | stopped
+    status: Mapped[str] = mapped_column(String(20), default="complete")
+    context: Mapped[list] = mapped_column(JSONB, default=list)
+    citations: Mapped[list] = mapped_column(JSONB, default=list)
+    # e.g. {"abstained": true, "uncited_sentences": 1, "invalid_citations": ["S12"]}
+    checks: Mapped[dict] = mapped_column(JSONB, default=dict)
+    provider_model_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("provider_models.id", ondelete="SET NULL")
+    )
+    model_label: Mapped[str | None] = mapped_column(String(400))
+    attempts: Mapped[list] = mapped_column(JSONB, default=list)
+    usage: Mapped[dict | None] = mapped_column(JSONB)
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

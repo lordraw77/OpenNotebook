@@ -4,6 +4,17 @@
     <header class="col-head">
       <h2>Sources</h2>
       <span class="spacer"></span>
+      @if (notebookId() && hasRole(selected()!, 'editor')) {
+        <a
+          mat-icon-button
+          matTooltip="Upload to this notebook"
+          aria-label="Upload"
+          routerLink="/upload"
+          [queryParams]="{ notebook: notebookId() }"
+        >
+          <mat-icon>upload_file</mat-icon>
+        </a>
+      }
       <button
         mat-icon-button
         matTooltip="New project"
@@ -34,19 +45,29 @@
       class="tree"
     >
       <mat-tree-node
+        matTreeNodePadding
+        [matTreeNodePaddingIndent]="16"
         *matTreeNodeDef="let item"
         class="tnode"
-        [class.selected]="item.node.id === selectedId()"
-        [class.inactive]="!item.node.active"
+        [class.selected]="
+          item.source
+            ? item.source.id === selectedSourceId()
+            : item.node.id === selectedId() && !selectedSourceId()
+        "
+        [class.inactive]="item.source ? !item.source.active : !item.node.active"
       >
         <span class="toggle-space"></span>
-        <ng-container *ngTemplateOutlet="row; context: { $implicit: item.node }"></ng-container>
+        <ng-container
+          *ngTemplateOutlet="item.source ? sourceRow : row; context: { $implicit: item }"
+        ></ng-container>
       </mat-tree-node>
       <mat-tree-node
+        matTreeNodePadding
+        [matTreeNodePaddingIndent]="16"
         *matTreeNodeDef="let item; when: hasChild"
         [isExpandable]="true"
         class="tnode"
-        [class.selected]="item.node.id === selectedId()"
+        [class.selected]="item.node.id === selectedId() && !selectedSourceId()"
         [class.inactive]="!item.node.active"
       >
         <button
@@ -57,20 +78,20 @@
         >
           <mat-icon>chevron_right</mat-icon>
         </button>
-        <ng-container *ngTemplateOutlet="row; context: { $implicit: item.node }"></ng-container>
+        <ng-container *ngTemplateOutlet="row; context: { $implicit: item }"></ng-container>
       </mat-tree-node>
     </mat-tree>
 
-    <ng-template #row let-node>
+    <ng-template #row let-item>
+      @let node = item.node;
       <button
         class="label"
         type="button"
         (click)="$event.stopPropagation(); select(node)"
-        [disabled]="node.role === null"
         [attr.aria-current]="node.id === selectedId()"
       >
         <mat-icon class="kind">{{ icons[node.kind] }}</mat-icon>
-        <span class="name">{{ node.name }}</span>
+        <span class="name" [title]="node.name">{{ node.name }}</span>
       </button>
       @if (node.role !== null) {
         <mat-slide-toggle
@@ -93,6 +114,34 @@
       }
     </ng-template>
 
+    <ng-template #sourceRow let-item>
+      @let src = item.source;
+      <button
+        class="label source"
+        type="button"
+        (click)="$event.stopPropagation(); openSource(src.id)"
+      >
+        <mat-icon class="kind">{{ sourceIcons[src.kind] ?? 'description' }}</mat-icon>
+        <span class="name" [title]="src.title">{{ src.title }}</span>
+        @if (!isTerminal(src)) {
+          <mat-icon class="state spin" [matTooltip]="src.status">progress_activity</mat-icon>
+        } @else if (src.status === 'failed') {
+          <mat-icon class="state failed" [matTooltip]="src.error?.message ?? 'failed'"
+            >error</mat-icon
+          >
+        }
+      </button>
+      <mat-slide-toggle
+        [checked]="src.active"
+        [disabled]="!hasRole(item.node, 'editor')"
+        (click)="$event.stopPropagation()"
+        (change)="toggleSource(src, $event.checked)"
+        [matTooltip]="src.active ? 'Included in search' : 'Excluded from search'"
+        [attr.aria-label]="'Include ' + src.title + ' in search'"
+      ></mat-slide-toggle>
+      <span class="menu-space"></span>
+    </ng-template>
+
     <mat-menu #nodeMenu="matMenu">
       <ng-template matMenuContent let-node="node">
         @if (hasRole(node, 'editor')) {
@@ -100,6 +149,11 @@
             <button mat-menu-item (click)="createChild(node, kind)">
               <mat-icon>{{ icons[kind] }}</mat-icon> New {{ kind }}
             </button>
+          }
+          @if (node.kind === 'notebook') {
+            <a mat-menu-item routerLink="/upload" [queryParams]="{ notebook: node.id }"
+              ><mat-icon>upload_file</mat-icon> Upload sources</a
+            >
           }
           <button mat-menu-item (click)="rename(node)"><mat-icon>edit</mat-icon> Rename</button>
         }
@@ -112,7 +166,7 @@
     </mat-menu>
   </aside>
 
-  <!-- Center column: grounded chat -->
+  <!-- Center column: search now, grounded chat in M2 -->
   <section class="col center" aria-label="Chat">
     <header class="col-head">
       @if (!leftOpen()) {
@@ -120,14 +174,24 @@
           <mat-icon>left_panel_open</mat-icon>
         </button>
       }
-      <nav class="crumbs" aria-label="Search scope">
+      <mat-button-toggle-group
+        class="mode"
+        hideSingleSelectionIndicator
+        [value]="mode()"
+        (change)="mode.set($event.value)"
+        aria-label="Center panel"
+      >
+        <mat-button-toggle value="chat"><mat-icon>forum</mat-icon> Chat</mat-button-toggle>
+        <mat-button-toggle value="search"><mat-icon>search</mat-icon> Search</mat-button-toggle>
+      </mat-button-toggle-group>
+      <nav class="crumbs" aria-label="Scope">
         @for (n of path(); track n.id; let last = $last) {
           <span [class.current]="last">{{ n.name }}</span>
           @if (!last) {
             <mat-icon class="sep">chevron_right</mat-icon>
           }
         } @empty {
-          <span class="muted">Select a project, workspace or notebook to set the search scope</span>
+          <span class="muted">Select a project, workspace or notebook to set the scope</span>
         }
       </nav>
       <span class="spacer"></span>
@@ -158,27 +222,33 @@
       }
     </header>
 
-    <div class="messages">
-      <div class="placeholder">
-        <mat-icon>forum</mat-icon>
-        <p>Grounded chat with clickable citations arrives in milestone M2.</p>
-        <p class="muted">Answers will use only the active sources inside the selected scope.</p>
-      </div>
+    @if (selectedSource(); as src) {
+      <app-source-detail
+        [source]="src"
+        [canEdit]="hasRole(selected()!, 'editor')"
+        (closed)="selectedSourceId.set(null)"
+        (changed)="reloadSources(false)"
+      />
+    } @else if (viewing(); as c) {
+      <app-source-viewer
+        [citation]="c"
+        (closed)="viewing.set(null)"
+        (details)="openSource($event, true)"
+      />
+    }
+    <!-- kept alive (hidden) while a source is open, so a streaming answer is not lost -->
+    <div class="pane" [hidden]="!!selectedSource() || !!viewing() || mode() !== 'chat'">
+      <app-chat-panel
+        [scopeId]="selectedId()"
+        [modelId]="chatModelId()"
+        [notebooks]="noteTargets()"
+        (openCitation)="openCitation($event)"
+        (noteSaved)="notesRefresh.set(notesRefresh() + 1)"
+      />
     </div>
-
-    <form class="composer" (ngSubmit)="$event.preventDefault()">
-      <mat-form-field appearance="outline" class="grow" subscriptSizing="dynamic">
-        <mat-label>Ask about the sources in scope</mat-label>
-        <textarea
-          matInput
-          name="question"
-          [(ngModel)]="question"
-          rows="2"
-          [disabled]="true"
-        ></textarea>
-      </mat-form-field>
-      <button mat-flat-button type="submit" [disabled]="true">Send</button>
-    </form>
+    <div class="pane" [hidden]="!!selectedSource() || !!viewing() || mode() !== 'search'">
+      <app-search-panel [scopeId]="selectedId()" (openSource)="openSource($event)" />
+    </div>
   </section>
 
   <!-- Right column: notes -->
@@ -195,8 +265,12 @@
         <mat-icon>right_panel_close</mat-icon>
       </button>
     </header>
-    <p class="muted empty">
-      Notes saved from chat or written manually will appear here (milestone M1–M2).
-    </p>
+    <app-notes-panel
+      [notebookId]="notebookId()"
+      [canEdit]="!!selected() && hasRole(selected()!, 'editor')"
+      [refresh]="notesRefresh()"
+      (changed)="reloadSources(false)"
+      (openCitation)="openCitation($event)"
+    />
   </aside>
 </div>

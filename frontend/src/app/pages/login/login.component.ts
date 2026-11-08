@@ -25,7 +25,8 @@ import { AuthService } from '../../core/auth.service';
       <mat-card appearance="outlined" class="card">
         <mat-card-header>
           <mat-card-title class="title"
-            ><mat-icon>auto_stories</mat-icon> OpenNotebook</mat-card-title
+            ><span class="logo"><mat-icon>auto_stories</mat-icon></span>
+            <span class="gradient-text">OpenNotebook</span></mat-card-title
           >
           <mat-card-subtitle>Sign in to continue</mat-card-subtitle>
         </mat-card-header>
@@ -74,11 +75,25 @@ import { AuthService } from '../../core/auth.service';
     }
     .card {
       width: min(400px, 100%);
+      border-top: 3px solid transparent;
+      border-image: var(--on-gradient) 1;
+      border-image-slice: 1 0 0 0;
+      box-shadow: 0 12px 40px var(--on-glow);
+    }
+    .logo {
+      display: grid;
+      place-items: center;
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: var(--on-gradient);
+      color: #fff;
     }
     .title {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 10px;
+      font-weight: 700;
     }
     .form {
       display: flex;

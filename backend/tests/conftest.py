@@ -25,6 +25,9 @@ os.environ.update(
         "STORAGE_BACKEND": "filesystem",
         "FILESYSTEM_ROOT": "/tmp/opennotebook-test-blobs",  # noqa: S108
         "LOG_LEVEL": "WARNING",
+        "QDRANT_LOCATION": ":memory:",
+        "CHUNK_SIZE_TOKENS": "60",
+        "CHUNK_OVERLAP_TOKENS": "10",
     }
 )
 
@@ -54,6 +57,7 @@ def database() -> None:
 
 
 TABLES = (
+    "messages, conversations, ingestion_jobs, chunks, source_blobs, sources, notes, "
     "phase_assignments, provider_models, providers, secrets, node_grants, nodes, refresh_tokens, "
     "group_members, groups, users, audit_log"
 )
@@ -71,6 +75,11 @@ async def clean_db(database: None):  # type: ignore[no-untyped-def]
     await redis.flushdb()  # test-only Redis database: clears login rate-limit counters
     await redis.aclose()
     yield
+    from opennotebook.ingestion.vectors import get_vector_index
+
+    index = get_vector_index()
+    for c in (await index.client.get_collections()).collections:
+        await index.client.delete_collection(c.name)
 
 
 @pytest.fixture

@@ -1,7 +1,8 @@
 import { NgTemplateOutlet } from '@angular/common';
-import { Component, computed, effect, inject, signal } from '@angular/core';
+import { Component, DestroyRef, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
+import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatDialog } from '@angular/material/dialog';
 import { MatDividerModule } from '@angular/material/divider';
 import { MatFormFieldModule } from '@angular/material/form-field';
@@ -13,21 +14,39 @@ import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatTreeModule } from '@angular/material/tree';
+import { RouterLink } from '@angular/router';
 
 import { NodeKind, ProviderModel, TreeNodeDto } from '../../core/api.models';
 import { ApiService, errorMessage } from '../../core/api.service';
+import { Citation, SourceDto, SourcesApi, TERMINAL } from '../../core/sources.api';
+import { ChatPanelComponent, NotebookOption } from './chat-panel.component';
 import { NameDialogComponent, ShareDialogComponent } from './dialogs';
-import { CHILD_KINDS, KIND_ICONS, TreeItem, breadcrumb, buildTree, hasRole } from './tree';
+import { NotesPanelComponent } from './notes-panel.component';
+import { SearchPanelComponent } from './search-panel.component';
+import { SourceDetailComponent } from './source-detail.component';
+import { SourceViewerComponent } from './source-viewer.component';
+import {
+  CHILD_KINDS,
+  KIND_ICONS,
+  SOURCE_ICONS,
+  TreeItem,
+  breadcrumb,
+  buildTree,
+  hasRole,
+} from './tree';
 
 const MODEL_KEY = 'on.chatModel.';
+const POLL_MS = 4000;
 
 @Component({
   selector: 'app-workbench',
   imports: [
     NgTemplateOutlet,
     FormsModule,
+    RouterLink,
     MatTreeModule,
     MatButtonModule,
+    MatButtonToggleModule,
     MatIconModule,
     MatMenuModule,
     MatSlideToggleModule,
@@ -36,49 +55,99 @@ const MODEL_KEY = 'on.chatModel.';
     MatInputModule,
     MatTooltipModule,
     MatDividerModule,
+    SearchPanelComponent,
+    ChatPanelComponent,
+    SourceViewerComponent,
+    SourceDetailComponent,
+    NotesPanelComponent,
   ],
   templateUrl: './workbench.component.html',
   styleUrl: './workbench.component.scss',
 })
 export class WorkbenchComponent {
   private readonly api = inject(ApiService);
+  private readonly sourcesApi = inject(SourcesApi);
   private readonly dialog = inject(MatDialog);
   private readonly snack = inject(MatSnackBar);
 
   readonly nodes = signal<TreeNodeDto[]>([]);
-  readonly tree = computed(() => buildTree(this.nodes()));
+  readonly sources = signal<SourceDto[]>([]);
+  readonly tree = computed(() => buildTree(this.nodes(), this.sources()));
   readonly selectedId = signal<string | null>(null);
   readonly selected = computed(() => this.nodes().find((n) => n.id === this.selectedId()) ?? null);
   readonly path = computed(() => breadcrumb(this.nodes(), this.selectedId()));
   readonly projectId = computed(() => this.selected()?.project_id ?? null);
+  readonly notebookId = computed(() =>
+    this.selected()?.kind === 'notebook' ? this.selected()!.id : null,
+  );
+  readonly selectedSourceId = signal<string | null>(null);
+  readonly selectedSource = computed(
+    () => this.sources().find((s) => s.id === this.selectedSourceId()) ?? null,
+  );
+  readonly notesRefresh = signal(0);
+  readonly mode = signal<'chat' | 'search'>('chat');
+  /** Cited passage open in the source viewer. */
+  readonly viewing = signal<Citation | null>(null);
+  /** Notebooks inside the scope where the user can save chat answers as notes. */
+  readonly noteTargets = computed<NotebookOption[]>(() => {
+    const scope = this.selectedId();
+    if (!scope) return [];
+    const nodes = this.nodes();
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    const inScope = (n: TreeNodeDto): boolean => {
+      for (let cur: TreeNodeDto | undefined = n; cur; cur = byId.get(cur.parent_id ?? '')) {
+        if (cur.id === scope) return true;
+      }
+      return false;
+    };
+    return nodes
+      .filter((n) => n.kind === 'notebook' && hasRole(n, 'editor') && inScope(n))
+      .map((n) => ({ id: n.id, name: n.name }));
+  });
 
   readonly chatModels = signal<ProviderModel[]>([]);
   readonly chatModelId = signal<string | null>(null);
   readonly modelError = signal<string | null>(null);
   readonly leftOpen = signal(true);
   readonly rightOpen = signal(true);
-  question = '';
 
   protected readonly icons: Record<string, string> = KIND_ICONS;
+  protected readonly sourceIcons = SOURCE_ICONS;
   protected readonly childKinds: Record<string, NodeKind[]> = CHILD_KINDS;
   protected readonly hasRole = hasRole;
+  protected readonly isTerminal = (s: SourceDto) => TERMINAL.includes(s.status);
   childrenAccessor = (item: TreeItem) => item.children;
   hasChild = (_: number, item: TreeItem) => item.children.length > 0;
-  trackBy = (_: number, item: TreeItem) => item.node.id;
-  expansionKey = (item: TreeItem) => item.node.id;
+  trackBy = (_: number, item: TreeItem) => item.key;
+  expansionKey = (item: TreeItem) => item.key;
 
   constructor() {
     void this.reload();
-    // Reload the selectable chat models whenever the project in scope changes.
     effect(() => void this.loadChatModels(this.projectId()));
+    // Poll while some source is still being processed.
+    const timer = setInterval(() => {
+      if (this.sources().some((s) => !TERMINAL.includes(s.status))) void this.reloadSources(true);
+    }, POLL_MS);
+    inject(DestroyRef).onDestroy(() => clearInterval(timer));
   }
 
   async reload(): Promise<void> {
     try {
       this.nodes.set(await this.api.nodes());
+      await this.reloadSources(false);
     } catch (err) {
       this.toast(errorMessage(err));
     }
+  }
+
+  async reloadSources(fromPoll: boolean): Promise<void> {
+    const before = this.sources();
+    const after = await this.sourcesApi.list();
+    this.sources.set(after);
+    const noteChanged = after.some(
+      (s) => s.kind === 'note' && before.find((b) => b.id === s.id)?.status !== s.status,
+    );
+    if (!fromPoll || noteChanged) this.notesRefresh.update((n) => n + 1);
   }
 
   private async loadChatModels(projectId: string | null): Promise<void> {
@@ -100,7 +169,26 @@ export class WorkbenchComponent {
   }
 
   select(node: TreeNodeDto): void {
-    if (node.role !== null) this.selectedId.set(node.id);
+    // Ancestors shown for navigation only (role null) are still valid search scopes:
+    // results are limited to the subtrees the user can read.
+    this.selectedId.set(node.id);
+    this.selectedSourceId.set(null);
+    this.viewing.set(null);
+  }
+
+  openCitation(c: Citation): void {
+    this.selectedSourceId.set(null);
+    this.viewing.set({ ...c });
+  }
+
+  /** `keepScope` opens the details without changing the chat scope (e.g. from a citation). */
+  openSource(id: string, keepScope = false): void {
+    const src = this.sources().find((s) => s.id === id);
+    if (src) {
+      this.viewing.set(null);
+      if (!keepScope) this.selectedId.set(src.notebook_id);
+      this.selectedSourceId.set(id);
+    }
   }
 
   async createProject(): Promise<void> {
@@ -129,8 +217,15 @@ export class WorkbenchComponent {
     );
   }
 
+  async toggleSource(source: SourceDto, active: boolean): Promise<void> {
+    await this.run(
+      () => this.sourcesApi.update(source.id, { active }),
+      active ? 'Source included in search' : 'Source excluded from search',
+    );
+  }
+
   async remove(node: TreeNodeDto): Promise<void> {
-    if (!confirm(`Delete “${node.name}” and everything inside it?`)) return;
+    if (!confirm(`Delete “${node.name}” and everything inside it, including its sources?`)) return;
     await this.run(() => this.api.deleteNode(node.id), 'Deleted');
     if (this.selectedId() === node.id) this.selectedId.set(null);
   }

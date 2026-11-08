@@ -18,7 +18,7 @@ All OpenNotebook images share the release version (`VERSION` file / `VERSION` va
 
 | Image | Built from | Purpose | Size (M0) |
 |---|---|---|---|
-| `opennotebook/web` | `frontend/` | Angular SPA served by unprivileged nginx; proxies `/api` to the api service; security headers | ~66 MB |
+| `opennotebook/web` | `frontend/` | Angular SPA served by unprivileged nginx; proxies `/api` to the api service (unbuffered, for the chat event stream); security headers; serves the pdf.js worker from `/pdfjs/` | ~70 MB |
 | `opennotebook/api` | `backend/` (target `api`) | FastAPI REST + SSE API; also runs the `migrate` one-shot job | ~520 MB |
 | `opennotebook/worker` | `backend/` (target `worker`) | Celery ingestion worker (LibreOffice, tree-sitter, Playwright are added in M1/M3) | ~520 MB |
 
@@ -118,6 +118,9 @@ registry at first start; afterwards manage them in **Settings → Providers**.
 External Ollama: set `OLLAMA_API_BASE=http://<host>:11434`; the host must be reachable from the `egress` network.
 For a slow CPU-only server raise `OLLAMA_TIMEOUT_S`.
 
+Chat tuning (`CHAT_*`, `RERANK_TIMEOUT_S`): how many passages are retrieved and given to the model, the history
+length, the answer length and the interactive timeouts; defaults are in `.env.example`.
+
 ## Make targets
 
 | Target | Action |
@@ -168,4 +171,8 @@ tar xzf opennotebook-<version>-bundle.tar.gz && cd opennotebook-<version>
 | Model test returns 404/410 | the provider still lists a retired model; it is marked unavailable automatically |
 | `RateLimitError` / "payment required" | account limits of the provider; add fallback models to the chain |
 | Blank/black page, components unstyled | an inline script was blocked by the CSP; the production build must keep `inlineCritical: false` (frontend/angular.json) so no inline script is emitted |
+| Chat answer shows "All chat models in the chain failed" | every model of the chat chain failed before answering (rate limit, expired key, timeout): the error lists each attempt; add a fallback model in Settings → Models or pick another model in the Workbench |
+| Chat waits a long time before answering | a slow chat model (e.g. CPU-only Ollama) gets `CHAT_FIRST_TOKEN_TIMEOUT_S` to start; lower it to fall back sooner |
+| PDF viewer stays empty, console reports a module MIME type error | the `/pdfjs/` location of `frontend/nginx.conf` (serves `.mjs` as JavaScript) is missing from a custom nginx config |
+| Sources stay in `embedding`, search returns 503 "Timeout" | the embedding provider is slow or saturated (e.g. a CPU-only Ollama also serving chat models); check **RAG Status → Recent jobs**, or assign a faster embedding model globally or per project and re-index |
 | Unexpected profile services start | inline comment in `.env` on `COMPOSE_PROFILES` (see Configuration) |

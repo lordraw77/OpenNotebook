@@ -34,6 +34,19 @@ describe('tree helpers', () => {
     expect(roots[0].children[1].children[0].children[0].node.id).toBe('driver');
   });
 
+  it('adds sources as leaves after the sub-nodes of their notebook', () => {
+    const nb = node('nb', 'source', 'notebook');
+    const sub = node('child', 'nb', 'notebook');
+    const src = { id: 'x', notebook_id: 'nb', title: 'a.pdf' } as never;
+    const roots = buildTree(
+      [node('wifi', null, 'project'), node('source', 'wifi', 'workspace'), nb, sub],
+      [src],
+    );
+    const nbItem = roots[0].children[0].children[0];
+    expect(nbItem.children.map((c) => c.key)).toEqual(['child', 's:x']);
+    expect(nbItem.children[1].source?.title).toBe('a.pdf');
+  });
+
   it('computes the breadcrumb of the selected scope', () => {
     expect(breadcrumb(flat, 'driver').map((n) => n.id)).toEqual([
       'wifi',

@@ -1,16 +1,34 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { DatePipe } from '@angular/common';
+import { Component, DestroyRef, computed, effect, inject, input, signal } from '@angular/core';
+import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
+import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatSelectModule } from '@angular/material/select';
+import { MatTableModule } from '@angular/material/table';
+import { MatTooltipModule } from '@angular/material/tooltip';
 
 import { TreeNodeDto } from '../../core/api.models';
-import { ApiService } from '../../core/api.service';
+import { ApiService, errorMessage } from '../../core/api.service';
+import { SourceDto, SourcesApi, TERMINAL, UploadResult, formatBytes } from '../../core/sources.api';
 import { breadcrumb, hasRole } from '../workbench/tree';
+
+const ACCEPT = '.pdf,.docx,.md,.markdown,.txt,text/plain,application/pdf';
 
 @Component({
   selector: 'app-upload',
-  imports: [MatCardModule, MatFormFieldModule, MatSelectModule, MatIconModule],
+  imports: [
+    DatePipe,
+    MatCardModule,
+    MatFormFieldModule,
+    MatSelectModule,
+    MatIconModule,
+    MatButtonModule,
+    MatProgressBarModule,
+    MatTableModule,
+    MatTooltipModule,
+  ],
   template: `
     <div class="page">
       <h1>Upload sources</h1>
@@ -24,14 +42,90 @@ import { breadcrumb, hasRole } from '../workbench/tree';
           }
         </mat-select>
       </mat-form-field>
-      <mat-card appearance="outlined" class="drop" aria-disabled="true">
+
+      <mat-card
+        appearance="outlined"
+        class="drop"
+        [class.over]="dragOver()"
+        [class.disabled]="!target()"
+        (dragover)="$event.preventDefault(); dragOver.set(!!target())"
+        (dragleave)="dragOver.set(false)"
+        (drop)="onDrop($event)"
+      >
         <mat-icon>cloud_upload</mat-icon>
-        <p>Drag files, archives or images here, or add a URL.</p>
-        <p class="muted">
-          File ingestion (PDF, TXT, Markdown, DOCX, code, archives, images, web pages) arrives in
-          milestone M1–M3.
+        <p>Drop PDF, DOCX, Markdown or text files here</p>
+        <button mat-flat-button [disabled]="!target() || uploading()" (click)="picker.click()">
+          Choose files
+        </button>
+        <input #picker type="file" multiple hidden [accept]="accept" (change)="onPick(picker)" />
+        <p class="muted small">
+          Archives, source code structure, images and web pages arrive in milestone M3.
         </p>
       </mat-card>
+
+      @if (uploading()) {
+        <mat-progress-bar mode="determinate" [value]="progress() * 100"></mat-progress-bar>
+      }
+      @if (error()) {
+        <p class="error-text">{{ error() }}</p>
+      }
+      @if (results().length) {
+        <ul class="results">
+          @for (r of results(); track r.filename + $index) {
+            <li>
+              @if (r.error) {
+                <mat-icon class="bad">block</mat-icon> {{ r.filename }}:
+                <span class="error-text">{{ r.error }}</span>
+              } @else if (r.duplicate) {
+                <mat-icon class="muted">content_copy</mat-icon> {{ r.filename }}: already in this
+                notebook
+              } @else {
+                <mat-icon class="ok">check_circle</mat-icon> {{ r.filename }}: queued for indexing
+              }
+            </li>
+          }
+        </ul>
+      }
+
+      @if (target()) {
+        <h2 class="section">Sources in this notebook</h2>
+        <div class="table-wrap">
+          <table mat-table [dataSource]="sources()">
+            <ng-container matColumnDef="title">
+              <th mat-header-cell *matHeaderCellDef>Source</th>
+              <td mat-cell *matCellDef="let s">{{ s.title }}</td>
+            </ng-container>
+            <ng-container matColumnDef="size">
+              <th mat-header-cell *matHeaderCellDef>Size</th>
+              <td mat-cell *matCellDef="let s">{{ size(s.size_bytes) }}</td>
+            </ng-container>
+            <ng-container matColumnDef="status">
+              <th mat-header-cell *matHeaderCellDef>Status</th>
+              <td mat-cell *matCellDef="let s">
+                <span class="status" [class]="s.status" [matTooltip]="s.error?.message ?? ''">{{
+                  s.status
+                }}</span>
+                @if (s.warnings.length) {
+                  <mat-icon class="warn" [matTooltip]="s.warnings.join(' ')">warning</mat-icon>
+                }
+              </td>
+            </ng-container>
+            <ng-container matColumnDef="chunks">
+              <th mat-header-cell *matHeaderCellDef>Chunks</th>
+              <td mat-cell *matCellDef="let s">{{ s.chunk_count }}</td>
+            </ng-container>
+            <ng-container matColumnDef="added">
+              <th mat-header-cell *matHeaderCellDef>Added</th>
+              <td mat-cell *matCellDef="let s">{{ s.created_at | date: 'short' }}</td>
+            </ng-container>
+            <tr mat-header-row *matHeaderRowDef="columns"></tr>
+            <tr mat-row *matRowDef="let s; columns: columns"></tr>
+            <tr class="mat-row" *matNoDataRow>
+              <td class="mat-cell muted" [attr.colspan]="columns.length">No sources yet.</td>
+            </tr>
+          </table>
+        </div>
+      }
     </div>
   `,
   styles: `
@@ -41,9 +135,16 @@ import { breadcrumb, hasRole } from '../workbench/tree';
     .drop {
       display: grid;
       place-items: center;
+      gap: 8px;
       text-align: center;
-      padding: 48px 16px;
+      padding: 32px 16px;
       border-style: dashed;
+    }
+    .drop.over {
+      background: var(--mat-sys-secondary-container);
+    }
+    .drop.disabled {
+      opacity: 0.6;
     }
     .drop mat-icon {
       font-size: 48px;
@@ -51,23 +152,143 @@ import { breadcrumb, hasRole } from '../workbench/tree';
       height: 48px;
       color: var(--mat-sys-primary);
     }
+    .small {
+      font-size: 12px;
+      margin: 0;
+    }
+    .results {
+      list-style: none;
+      padding: 0;
+    }
+    .results li {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 4px 0;
+    }
+    .ok {
+      color: var(--mat-sys-primary);
+    }
+    .bad {
+      color: var(--mat-sys-error);
+    }
+    .section {
+      font: var(--mat-sys-title-medium);
+      margin: 24px 0 8px;
+    }
+    .table-wrap {
+      overflow-x: auto;
+    }
+    table {
+      width: 100%;
+    }
+    .status {
+      font-size: 12px;
+      padding: 2px 10px;
+      border-radius: 10px;
+      background: var(--mat-sys-secondary-container);
+      color: var(--mat-sys-on-secondary-container);
+    }
+    .status.ready {
+      background: var(--mat-sys-primary-container);
+      color: var(--mat-sys-on-primary-container);
+    }
+    .status.failed {
+      background: var(--mat-sys-error-container);
+      color: var(--mat-sys-on-error-container);
+    }
+    .warn {
+      font-size: 18px;
+      width: 18px;
+      height: 18px;
+      vertical-align: middle;
+      color: var(--mat-sys-tertiary);
+    }
   `,
 })
 export class UploadComponent {
   private readonly api = inject(ApiService);
+  private readonly sourcesApi = inject(SourcesApi);
+
+  /** Optional ?notebook=<id> preselection (router input binding). */
+  readonly notebook = input<string | undefined>();
+
   private readonly all = signal<TreeNodeDto[]>([]);
   readonly notebooks = computed(() =>
     this.all().filter((n) => n.kind === 'notebook' && hasRole(n, 'editor')),
   );
   readonly target = signal<string | null>(null);
+  readonly sources = signal<SourceDto[]>([]);
+  readonly results = signal<UploadResult[]>([]);
+  readonly uploading = signal(false);
+  readonly progress = signal(0);
+  readonly error = signal<string | null>(null);
+  readonly dragOver = signal(false);
+  readonly columns = ['title', 'size', 'status', 'chunks', 'added'];
+  protected readonly accept = ACCEPT;
+  protected readonly size = formatBytes;
 
   constructor() {
-    void this.api.nodes().then((n) => this.all.set(n));
+    void this.api.nodes().then((n) => {
+      this.all.set(n);
+      const wanted = this.notebook();
+      if (wanted && this.notebooks().some((x) => x.id === wanted)) this.target.set(wanted);
+    });
+    effect(() => {
+      const t = this.target();
+      this.results.set([]);
+      void this.loadSources(t);
+    });
+    const timer = setInterval(() => {
+      if (this.sources().some((s) => !TERMINAL.includes(s.status)))
+        void this.loadSources(this.target());
+    }, 3000);
+    inject(DestroyRef).onDestroy(() => clearInterval(timer));
   }
 
   label(n: TreeNodeDto): string {
     return breadcrumb(this.all(), n.id)
       .map((x) => x.name)
       .join(' / ');
+  }
+
+  private async loadSources(notebookId: string | null): Promise<void> {
+    this.sources.set(
+      notebookId ? (await this.sourcesApi.list(notebookId)).filter((s) => s.kind !== 'note') : [],
+    );
+  }
+
+  onPick(input: HTMLInputElement): void {
+    const files = Array.from(input.files ?? []);
+    input.value = '';
+    this.send(files);
+  }
+
+  onDrop(event: DragEvent): void {
+    event.preventDefault();
+    this.dragOver.set(false);
+    this.send(Array.from(event.dataTransfer?.files ?? []));
+  }
+
+  private send(files: File[]): void {
+    const target = this.target();
+    if (!target || files.length === 0) return;
+    this.uploading.set(true);
+    this.progress.set(0);
+    this.error.set(null);
+    this.sourcesApi.upload(target, files).subscribe({
+      next: (e) => {
+        if ('progress' in e) this.progress.set(e.progress);
+        else this.results.set(e.done);
+      },
+      error: (err) => {
+        this.error.set(errorMessage(err));
+        this.uploading.set(false);
+      },
+      complete: () => {
+        this.uploading.set(false);
+        void this.loadSources(target);
+      },
+    });
   }
 }

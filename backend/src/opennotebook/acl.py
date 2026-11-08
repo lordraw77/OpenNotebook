@@ -99,3 +99,18 @@ async def readable_subtree_roots(session: AsyncSession, user: User, scope: Node)
     if role_for_path(grants, scope.path) is not None:
         return None
     return sorted({g.path for g in grants if is_ancestor_or_self(scope.path, g.path)})
+
+
+async def get_search_scope(session: AsyncSession, user: User, node_id: uuid.UUID) -> Node:
+    """A scope can be searched when the user reads it, or reads at least one subtree below it.
+
+    In the second case results are limited to those subtrees by `readable_subtree_roots` (pre-filter).
+    """
+    node = await session.get(Node, node_id)
+    if node is None or node.deleted_at is not None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Node not found")
+    if await effective_role(session, user, node) is not None:
+        return node
+    if await readable_subtree_roots(session, user, node):
+        return node
+    raise HTTPException(status.HTTP_404_NOT_FOUND, "Node not found")

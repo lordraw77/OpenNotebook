@@ -10,7 +10,18 @@ from fastapi import FastAPI, Request, Response
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 
 from opennotebook import __version__
-from opennotebook.api import assignments, auth, health, nodes, providers, users
+from opennotebook.api import (
+    assignments,
+    auth,
+    conversations,
+    health,
+    ingestion_status,
+    nodes,
+    notes,
+    providers,
+    sources,
+    users,
+)
 from opennotebook.config import get_settings
 from opennotebook.logging_setup import configure_logging
 
@@ -65,6 +76,10 @@ def create_app() -> FastAPI:
         nodes.router,
         providers.router,
         assignments.router,
+        sources.router,
+        notes.router,
+        ingestion_status.router,
+        conversations.router,
     ):
         app.include_router(router)
 

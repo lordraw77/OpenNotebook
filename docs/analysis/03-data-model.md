@@ -163,6 +163,15 @@ Other tables (summary): `users`, `groups`, `group_members`,
 Implemented in migration `0001` (M0): `users`, `groups`, `group_members`, `refresh_tokens` (hashed, rotated), `nodes`, `node_grants`,
 `secrets` (AES-256-GCM ciphertext + nonce + display hint), `providers`, `provider_models` (capabilities, `capabilities_source`
 inferred|provider|manual, `available`), `phase_assignments` (surrogate id + partial unique indexes for global and per-project chains), `audit_log`.
+Implemented in migration `0002` (M1): `sources` (status, error, warnings, embedding model and vector collection used,
+chunk and page counts, soft delete, unique content hash per notebook), `source_blobs` (original file and extracted
+text), `chunks` (text, heading path, pages, bboxes, char offsets, lines, estimated tokens, generated `tsvector`),
+`ingestion_jobs` (one row per attempt) and `notes` (an indexed note is mirrored by a source of kind `note`).
+Implemented in migration `0003` (M2): `conversations` (owner, scope node, title) and `messages` (role, content,
+status `complete|error|stopped`, `context` = passages given to the model, `citations` = validated passages used,
+`checks`, model used, fallback attempts, usage, latency, error). Citations are stored as JSONB snapshots on the
+message instead of a `message_citations` table, so they stay resolvable after a source is re-indexed (new chunk
+ids) or deleted. Notes saved from the chat (`origin = chat`) copy those citations.
 The other tables arrive with their milestone.
 
 ## 3. Scope and permission rules

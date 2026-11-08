@@ -9,9 +9,11 @@ Embedding never falls back (vectors from different models are not comparable).
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -31,6 +33,11 @@ class GatewayError(Exception):
     def __init__(self, message: str, attempts: list[dict] | None = None) -> None:
         super().__init__(message)
         self.attempts = attempts or []
+
+    def describe(self) -> str:
+        """Message plus the failed attempts, e.g. `... (ollama/bge-m3: Timeout)`."""
+        failed = [f"{a['model']}: {a['error']}" for a in self.attempts if a.get("error")]
+        return f"{self} ({'; '.join(failed)})" if failed else str(self)
 
 
 @dataclass
@@ -188,9 +195,16 @@ class ModelGateway:
         return await self._run(chain, call)
 
     async def embed(
-        self, texts: list[str], project_id: uuid.UUID | None = None, input_type: str = "passage"
+        self,
+        texts: list[str],
+        project_id: uuid.UUID | None = None,
+        input_type: str = "passage",
+        timeout_s: int | None = None,
     ) -> CallResult:
-        """Embed documents (input_type="passage") or a search query (input_type="query")."""
+        """Embed documents (input_type="passage") or a search query (input_type="query").
+
+        `timeout_s` caps the provider timeout, e.g. for interactive searches on a slow provider.
+        """
         import litellm
 
         chain = await self.resolve(ModelPhase.embedding, project_id)
@@ -200,11 +214,164 @@ class ModelGateway:
                 model=litellm_model_name(r.provider.kind, r.model.model, ModelPhase.embedding),
                 input=texts,
                 **embedding_extra(r.provider.kind, input_type),
-                **litellm_kwargs(r),
+                **_capped(litellm_kwargs(r), timeout_s),
             )
             return [d["embedding"] for d in resp.data]
 
         return await self._run(chain, call)
+
+    async def rerank(
+        self,
+        query: str,
+        documents: list[str],
+        project_id: uuid.UUID | None = None,
+        top_n: int | None = None,
+        timeout_s: int | None = None,
+    ) -> CallResult | None:
+        """Order documents by relevance. Returns None when no rerank model is configured.
+
+        The value is a list of (document index, relevance score), best first.
+        """
+        try:
+            chain = await self.resolve(ModelPhase.rerank, project_id)
+        except GatewayError:
+            return None
+
+        async def call(r: ResolvedModel) -> list[tuple[int, float]]:
+            kwargs = _capped(litellm_kwargs(r), timeout_s)
+            if r.provider.kind == ProviderKind.cloudflare:
+                return await _cloudflare_rerank(r, query, documents, top_n, kwargs["timeout"])
+            import litellm
+
+            resp = await litellm.arerank(
+                model=litellm_model_name(r.provider.kind, r.model.model, ModelPhase.rerank),
+                query=query,
+                documents=documents,
+                top_n=top_n or len(documents),
+                **kwargs,
+            )
+            return [(int(x["index"]), float(x["relevance_score"])) for x in resp.results]
+
+        return await self._run(chain, call)
+
+    async def stream_chat(
+        self,
+        messages: list[dict],
+        project_id: uuid.UUID | None = None,
+        selected_model_id: uuid.UUID | None = None,
+        first_token_timeout_s: int | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatEvent]:
+        """Stream a chat completion, falling back along the chain until a model starts answering.
+
+        Fallback is only possible before the first token: once text has been streamed to the user, an
+        error ends the stream (raised as GatewayError with the partial attempts).
+        Yields a `provider` event first, then `token` events, then a final `usage` event.
+        """
+        import litellm
+
+        chain = await self.resolve(ModelPhase.chat, project_id, selected_model_id)
+        attempts: list[dict] = []
+        for resolved in chain:
+            start = time.perf_counter()
+            try:
+                stream = await litellm.acompletion(
+                    model=litellm_model_name(resolved.provider.kind, resolved.model.model, ModelPhase.chat),
+                    messages=messages,
+                    stream=True,
+                    stream_options={"include_usage": True},
+                    **{**resolved.params, **kwargs},
+                    **litellm_kwargs(resolved),
+                )
+                iterator = stream.__aiter__()
+                first, usage = await asyncio.wait_for(_first_text(iterator), timeout=first_token_timeout_s)
+            except Exception as exc:  # noqa: BLE001 - try the next model of the chain
+                attempts.append(
+                    {"model": resolved.label, "error": exc.__class__.__name__, "detail": _safe_detail(exc)}
+                )
+                continue
+            attempts.append({"model": resolved.label, "ok": True})
+            yield ChatEvent("provider", used=resolved, attempts=attempts)
+            if first:
+                yield ChatEvent("token", text=first)
+            try:
+                async for chunk in iterator:
+                    text, chunk_usage = _chunk_parts(chunk)
+                    usage = chunk_usage or usage
+                    if text:
+                        yield ChatEvent("token", text=text)
+            except Exception as exc:  # noqa: BLE001
+                attempts[-1] = {
+                    "model": resolved.label,
+                    "error": exc.__class__.__name__,
+                    "detail": _safe_detail(exc),
+                }
+                raise GatewayError("The model stopped while answering", attempts) from exc
+            latency = int((time.perf_counter() - start) * 1000)
+            yield ChatEvent("usage", used=resolved, attempts=attempts, usage=usage, latency_ms=latency)
+            return
+        raise GatewayError("All chat models in the chain failed", attempts)
+
+
+@dataclass
+class ChatEvent:
+    kind: str  # provider | token | usage
+    text: str = ""
+    used: ResolvedModel | None = None
+    attempts: list[dict] = field(default_factory=list)
+    usage: dict | None = None
+    latency_ms: int | None = None
+
+
+def _chunk_parts(chunk: Any) -> tuple[str, dict | None]:
+    usage = getattr(chunk, "usage", None)
+    usage_dict = None
+    if usage:
+        usage_dict = {
+            "prompt_tokens": getattr(usage, "prompt_tokens", None),
+            "completion_tokens": getattr(usage, "completion_tokens", None),
+        }
+    choices = getattr(chunk, "choices", None) or []
+    text = ""
+    if choices:
+        delta = getattr(choices[0], "delta", None)
+        text = (getattr(delta, "content", None) or "") if delta is not None else ""
+    return text, usage_dict
+
+
+async def _first_text(iterator: AsyncIterator[Any]) -> tuple[str, dict | None]:
+    """Read until the first non-empty text (reasoning models may stream empty deltas first)."""
+    usage = None
+    async for chunk in iterator:
+        text, chunk_usage = _chunk_parts(chunk)
+        usage = chunk_usage or usage
+        if text:
+            return text, usage
+    return "", usage
+
+
+async def _cloudflare_rerank(
+    r: ResolvedModel, query: str, documents: list[str], top_n: int | None, limit_s: float
+) -> list[tuple[int, float]]:
+    """Workers AI rerank models are not on the OpenAI-compatible endpoint: call /ai/run directly."""
+    import httpx
+
+    account = (r.provider.options or {}).get("account_id", "")
+    url = f"https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{r.model.model}"
+    body: dict[str, Any] = {"query": query, "contexts": [{"text": d} for d in documents]}
+    if top_n:
+        body["top_k"] = top_n
+    async with httpx.AsyncClient(timeout=limit_s) as client:
+        resp = await client.post(url, json=body, headers={"Authorization": f"Bearer {r.api_key}"})
+        resp.raise_for_status()
+        items = (resp.json().get("result") or {}).get("response") or []
+    return [(int(x["id"]), float(x["score"])) for x in items]
+
+
+def _capped(kwargs: dict[str, Any], timeout_s: int | None) -> dict[str, Any]:
+    if timeout_s is not None:
+        kwargs["timeout"] = min(kwargs["timeout"], timeout_s)
+    return kwargs
 
 
 def _safe_detail(exc: Exception) -> str:
