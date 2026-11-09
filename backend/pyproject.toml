@@ -1,6 +1,6 @@
 [project]
 name = "opennotebook"
-version = "1.0.0"
+version = "1.0.1"
 description = "OpenNotebook backend: API, ingestion worker and model gateway"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"

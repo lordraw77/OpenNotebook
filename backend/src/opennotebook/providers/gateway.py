@@ -372,6 +372,8 @@ class ModelGateway:
             kwargs = _capped(litellm_kwargs(r), timeout_s)
             if r.provider.kind == ProviderKind.cloudflare:
                 return await _cloudflare_rerank(r, query, documents, top_n, kwargs["timeout"])
+            if r.provider.kind == ProviderKind.ollama:
+                return await _ollama_rerank(r, query, documents, top_n, kwargs["timeout"])
             import litellm
 
             resp = await litellm.arerank(
@@ -502,6 +504,24 @@ async def _cloudflare_rerank(
         resp.raise_for_status()
         items = (resp.json().get("result") or {}).get("response") or []
     return [(int(x["id"]), float(x["score"])) for x in items]
+
+
+async def _ollama_rerank(
+    r: ResolvedModel, query: str, documents: list[str], top_n: int | None, limit_s: float
+) -> list[tuple[int, float]]:
+    """Ollama has no rerank API; proxies such as llmproxy serve the Jina/Cohere `/rerank` next to it."""
+    import httpx
+
+    base = (r.provider.base_url or "").rstrip("/")
+    body: dict[str, Any] = {"model": r.model.model, "query": query, "documents": documents}
+    if top_n:
+        body["top_n"] = top_n
+    headers = {"Authorization": f"Bearer {r.api_key}"} if r.api_key else {}
+    async with httpx.AsyncClient(timeout=limit_s) as client:
+        resp = await client.post(f"{base}/rerank", json=body, headers=headers)
+        resp.raise_for_status()
+        items = resp.json().get("results") or []
+    return [(int(x["index"]), float(x["relevance_score"])) for x in items]
 
 
 def _capped(kwargs: dict[str, Any], timeout_s: int | None) -> dict[str, Any]:

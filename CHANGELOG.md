@@ -2,6 +2,11 @@
 
 All notable changes. Images: `lordraw/opennotebook-{web,api,worker}` on Docker Hub.
 
+## 1.0.1 — 2026-11-09
+
+- Rerank models of an Ollama provider are called through `POST <base_url>/rerank` (Jina/Cohere format), as served by
+  Ollama-compatible proxies such as llmproxy; plain Ollama has no rerank API.
+
 ## 1.0.0 — 2026-11-09
 
 Includes the M6 work below.

@@ -168,3 +168,35 @@ async def test_filesystem_blob_store(tmp_path):
     for bad in ("../etc/passwd", "/abs", "a//b", "a/./b"):
         with pytest.raises(ValueError):
             _safe_key(bad)
+
+
+async def test_ollama_rerank_calls_the_proxy_rerank_endpoint(monkeypatch):
+    """Ollama has no rerank API: the gateway posts Jina/Cohere-style requests to <base_url>/rerank."""
+    from types import SimpleNamespace
+
+    import httpx
+
+    from opennotebook.providers.gateway import _ollama_rerank
+
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["auth"] = request.headers.get("authorization")
+        seen["body"] = __import__("json").loads(request.content)
+        return httpx.Response(
+            200,
+            json={"results": [{"index": 1, "relevance_score": 0.9}, {"index": 0, "relevance_score": 0.1}]},
+        )
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    resolved = SimpleNamespace(
+        provider=SimpleNamespace(base_url="http://proxy:11434/"),
+        model=SimpleNamespace(model="reranker"),
+        api_key=None,
+    )
+    out = await _ollama_rerank(resolved, "q", ["a", "b"], 2, 5)
+    assert out == [(1, 0.9), (0, 0.1)]
+    assert seen["url"] == "http://proxy:11434/rerank" and seen["auth"] is None
+    assert seen["body"] == {"model": "reranker", "query": "q", "documents": ["a", "b"], "top_n": 2}
