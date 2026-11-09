@@ -187,6 +187,10 @@ Implemented in migration `0006` (M5): `groups.description`, `groups.source` (`lo
 index_switched_at)`: the provider policy and the embedding model whose index serves searches (backfilled for
 existing projects from their indexed sources). Chunk ids are now deterministic (uuid5 of source, ordinal and text
 hash).
+Since 0.5.1, sources can be attached to any node (project, workspace or notebook): `sources.notebook_id` is the
+container node (the column keeps its historical name). Scope, ACL, switches and deletion already work on the node
+path, so a source on a workspace is in scope for that workspace and its ancestors only. Notes still belong to
+notebooks.
 The other tables arrive with their milestone.
 
 ## 3. Scope and permission rules

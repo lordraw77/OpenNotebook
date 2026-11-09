@@ -3,8 +3,9 @@
 Self-hosted knowledge workspace with **grounded RAG chat** and **traceable citations**.
 
 Upload documents, source code, archives, images, web pages and notes, organize them in a freely nested
-**Project → Workspace → Notebook** tree, and chat with an LLM that answers **only** from the sources in the selected
-scope. Every claim cites its source (`[Source 1, p. 4]`), and clicking a citation highlights the exact passage.
+**Project → Workspace → Notebook** tree (sources can live at any level), and chat with an LLM that answers
+**only** from the sources in the selected scope. Every claim cites its source (`[Source 1, p. 4]`), and clicking
+a citation highlights the exact passage.
 
 > **Status: milestones M0–M5 complete** (foundations, ingestion, grounded chat, extended ingestion, knowledge
 > graph and wiki, administration and deep research). Runs today: the packaged stack; local and single sign-on

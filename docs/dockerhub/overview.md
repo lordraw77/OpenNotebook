@@ -73,11 +73,12 @@ Redis. Optional profiles: `observability` (Prometheus + Grafana) and `auth` (Key
 
 | Tag | Content |
 |---|---|
+| `0.5.1` | Fix: sources can be uploaded to projects and workspaces, not only notebooks |
 | `0.5.0` | M0–M5: adds groups, single sign-on (OIDC), provider policy per project, zero-downtime embedding change, deep research mode |
 | `0.4.0` | M0–M4: foundations, ingestion, grounded chat, extended ingestion, knowledge graph and wiki |
 | `latest` | The most recent release |
 
-Pin an exact version in production (`VERSION=0.5.0` in `.env`). The three images of a deployment must have the
+Pin an exact version in production (`VERSION=0.5.1` in `.env`). The three images of a deployment must have the
 same version. Images are `linux/amd64`.
 
 {{IMAGE_DETAILS}}

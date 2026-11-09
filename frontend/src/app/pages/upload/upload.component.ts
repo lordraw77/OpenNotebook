@@ -13,7 +13,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { TreeNodeDto } from '../../core/api.models';
 import { ApiService, errorMessage } from '../../core/api.service';
 import { SourceDto, SourcesApi, TERMINAL, UploadResult, formatBytes } from '../../core/sources.api';
-import { SOURCE_ICONS, breadcrumb, hasRole } from '../workbench/tree';
+import { KIND_ICONS, SOURCE_ICONS, breadcrumb, hasRole } from '../workbench/tree';
 
 // Any file can be dropped: the type is detected from the content on the server.
 const ACCEPT = '';
@@ -36,12 +36,14 @@ const ACCEPT = '';
     <div class="page">
       <h1>Upload sources</h1>
       <mat-form-field appearance="outline" class="target">
-        <mat-label>Target notebook</mat-label>
+        <mat-label>Upload to (project, workspace or notebook)</mat-label>
         <mat-select [value]="target()" (valueChange)="target.set($event)">
           @for (n of notebooks(); track n.id) {
-            <mat-option [value]="n.id">{{ label(n) }}</mat-option>
+            <mat-option [value]="n.id"
+              ><mat-icon>{{ kindIcons[n.kind] }}</mat-icon> {{ label(n) }}</mat-option
+            >
           } @empty {
-            <mat-option disabled>No notebook where you can upload</mat-option>
+            <mat-option disabled>Nothing you can upload to: ask for editor access</mat-option>
           }
         </mat-select>
       </mat-form-field>
@@ -144,7 +146,7 @@ const ACCEPT = '';
       }
 
       @if (target()) {
-        <h2 class="section">Sources in this notebook</h2>
+        <h2 class="section">Sources here and inside</h2>
         <div class="table-wrap">
           <table mat-table [dataSource]="sources()">
             <ng-container matColumnDef="title">
@@ -317,9 +319,9 @@ export class UploadComponent {
   readonly notebook = input<string | undefined>();
 
   private readonly all = signal<TreeNodeDto[]>([]);
-  readonly notebooks = computed(() =>
-    this.all().filter((n) => n.kind === 'notebook' && hasRole(n, 'editor')),
-  );
+  /** Any node the user can edit: sources may be attached to projects, workspaces and notebooks. */
+  readonly notebooks = computed(() => this.all().filter((n) => hasRole(n, 'editor')));
+  protected readonly kindIcons = KIND_ICONS;
   readonly target = signal<string | null>(null);
   readonly sources = signal<SourceDto[]>([]);
   readonly results = signal<UploadResult[]>([]);

@@ -23,7 +23,6 @@ from opennotebook.ingestion.web import FetchError, normalize_url
 from opennotebook.models import (
     Chunk,
     GrantRole,
-    NodeKind,
     Source,
     SourceBlob,
     SourceKind,
@@ -161,9 +160,8 @@ async def _read_limited(upload: UploadFile, limit: int) -> bytes:
 async def upload_sources(
     notebook_id: uuid.UUID, user: CurrentUser, session: SessionDep, files: list[UploadFile] = File(...)
 ) -> list[UploadResult]:
+    # Sources can be added to any node (project, workspace or notebook); `notebook_id` is the container node.
     notebook, _ = await get_node_for(session, user, notebook_id, GrantRole.editor)
-    if notebook.kind != NodeKind.notebook:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Sources can only be added to a notebook")
     limit = get_settings().upload_max_mb * 1024 * 1024
     store = get_blob_store()
     results: list[UploadResult] = []
@@ -236,8 +234,6 @@ async def add_web_pages(
 ) -> list[UploadResult]:
     """Add web pages by URL; they are fetched by the worker (SSRF-protected) and indexed like documents."""
     notebook, _ = await get_node_for(session, user, notebook_id, GrantRole.editor)
-    if notebook.kind != NodeKind.notebook:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Sources can only be added to a notebook")
     settings = get_settings()
     if body.crawl_depth > settings.web_crawl_max_depth:
         raise HTTPException(
@@ -309,12 +305,8 @@ async def list_sources(
     status_filter: SourceStatus | None = Query(default=None, alias="status"),
     include_notes: bool = True,
 ) -> list[Source]:
-    """Sources the user can read, optionally restricted to a subtree."""
-    readable = [
-        n
-        for n, role in await visible_nodes(session, user)
-        if role is not None and n.kind == NodeKind.notebook
-    ]
+    """Sources the user can read (projects, workspaces, notebooks), optionally restricted to a subtree."""
+    readable = [n for n, role in await visible_nodes(session, user) if role is not None]
     if scope_id is not None:
         scope, _ = await get_node_for(session, user, scope_id)
         readable = [n for n in readable if n.path == scope.path or n.path.startswith(scope.path + ".")]

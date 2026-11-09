@@ -205,12 +205,6 @@ async def test_upload_ingest_chunks_and_file(client, admin_headers, session, wor
     )
     assert again[0]["duplicate"] is True and again[1]["error"].startswith("7z archives")
     assert jobs == []
-    r = await client.post(
-        f"/api/nodes/{world.src['id']}/sources",
-        headers=admin_headers,
-        files=[("files", ("a.md", b"x", "text/plain"))],
-    )
-    assert r.status_code == 422
 
 
 async def test_scoped_hybrid_search(client, admin_headers, world):
@@ -406,3 +400,67 @@ async def test_search_caps_slow_provider_timeout(client, admin_headers, world, m
     )
     assert r.status_code == 503 and "Timeout" in r.json()["detail"]
     assert seen["timeout"] == 30  # provider timeout is 60, capped by SEARCH_TIMEOUT_S
+
+
+async def test_sources_on_projects_and_workspaces(client, admin_headers, session, world, jobs):
+    """Sources can be added to any node, not only notebooks; scope, ACL and deletion follow the tree."""
+    on_project = await upload(
+        client,
+        admin_headers,
+        world.wifi["id"],
+        [("policy.md", b"# Policy\n\nAll antennas must be certified.\n")],
+    )
+    await upload(
+        client,
+        admin_headers,
+        world.src["id"],
+        [("arch.md", b"# Architecture\n\nThe firmware uses a scheduler.\n")],
+    )
+    r = await client.post(
+        f"/api/nodes/{world.docs['id']}/web", headers=admin_headers, json={"urls": ["https://example.org/x"]}
+    )
+    assert r.status_code == 201 and r.json()[0]["source"]["notebook_id"] == world.docs["id"]
+    jobs[:] = [j for j in jobs if j[1] != r.json()[0]["source"]["id"]]  # not fetched in this test
+    assert await run_jobs(session, jobs) == [SourceStatus.ready, SourceStatus.ready]
+    assert on_project[0]["source"]["notebook_id"] == world.wifi["id"]
+
+    listed = {s["title"]: s for s in (await client.get("/api/sources", headers=admin_headers)).json()}
+    assert {"policy.md", "arch.md"} <= set(listed)
+    in_src = {
+        s["title"]
+        for s in (
+            await client.get("/api/sources", headers=admin_headers, params={"scope_id": world.src["id"]})
+        ).json()
+    }
+    assert in_src == {"radio.md", "arch.md"}
+
+    # search: the project scope sees everything; a workspace sees its own sources and its subtree only
+    assert "policy.md" in {
+        h["source_title"] for h in await search(client, admin_headers, world.wifi["id"], "antennas certified")
+    }
+    assert "arch.md" in {
+        h["source_title"] for h in await search(client, admin_headers, world.src["id"], "firmware scheduler")
+    }
+    assert "policy.md" not in {
+        h["source_title"] for h in await search(client, admin_headers, world.src["id"], "antennas certified")
+    }
+
+    # a user who can read only `docs` sees neither the project-level nor the `source` workspace sources
+    bob = await make_user(session, "bob@example.com")
+    bob_headers = await login(client, "bob@example.com")
+    await client.put(
+        f"/api/nodes/{world.docs['id']}/grants",
+        headers=admin_headers,
+        json={"principal_type": "user", "principal_id": str(bob.id), "role": "viewer"},
+    )
+    titles = {s["title"] for s in (await client.get("/api/sources", headers=bob_headers)).json()}
+    assert "policy.md" not in titles and "arch.md" not in titles
+    hits = await search(client, bob_headers, world.wifi["id"], "antennas certified firmware scheduler")
+    assert not {"policy.md", "arch.md"} & {h["source_title"] for h in hits}
+    status = (await client.get("/api/ingestion/status", headers=admin_headers)).json()
+    assert next(p for p in status["projects"] if p["project_name"] == "wifi")["sources"] >= 4
+
+    # deleting the workspace removes the sources attached to it
+    assert (await client.delete(f"/api/nodes/{world.src['id']}", headers=admin_headers)).status_code == 204
+    titles = {s["title"] for s in (await client.get("/api/sources", headers=admin_headers)).json()}
+    assert "arch.md" not in titles and "radio.md" not in titles and "policy.md" in titles

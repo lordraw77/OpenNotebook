@@ -102,7 +102,8 @@ async def _embedding_model(
 @router.get("/status", response_model=IngestionStatus)
 async def ingestion_status(user: CurrentUser, session: SessionDep) -> IngestionStatus:
     nodes = [(n, r) for n, r in await visible_nodes(session, user) if r is not None]
-    notebooks = [n for n, _ in nodes if n.kind == NodeKind.notebook]
+    # every readable node can hold sources (projects, workspaces and notebooks)
+    notebooks = [n for n, _ in nodes]
     nb_ids = [n.id for n in notebooks]
     base = (Source.notebook_id.in_(nb_ids), Source.deleted_at.is_(None))
 

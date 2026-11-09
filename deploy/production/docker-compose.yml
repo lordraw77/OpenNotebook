@@ -25,7 +25,7 @@ x-hardening: &hardening
   cap_drop: [ALL]
 
 x-app: &app
-  image: ${REGISTRY:-lordraw}/opennotebook-api:${VERSION:-0.5.0}
+  image: ${REGISTRY:-lordraw}/opennotebook-api:${VERSION:-0.5.1}
   pull_policy: missing
   env_file:
     - path: .env
@@ -44,7 +44,7 @@ x-app: &app
 
 services:
   web:
-    image: ${REGISTRY:-lordraw}/opennotebook-web:${VERSION:-0.5.0}
+    image: ${REGISTRY:-lordraw}/opennotebook-web:${VERSION:-0.5.1}
     pull_policy: missing
     ports:
       - "${WEB_BIND:-0.0.0.0}:${WEB_PORT:-8080}:8080"
@@ -72,7 +72,7 @@ services:
 
   worker:
     <<: *app
-    image: ${REGISTRY:-lordraw}/opennotebook-worker:${VERSION:-0.5.0}
+    image: ${REGISTRY:-lordraw}/opennotebook-worker:${VERSION:-0.5.1}
     command: ["worker"]
     depends_on:
       migrate:

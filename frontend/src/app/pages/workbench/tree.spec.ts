@@ -73,4 +73,13 @@ describe('tree helpers', () => {
     expect(driver.children.map((c) => c.key)).toEqual(['s:fw.zip']);
     expect(driver.children[0].children.map((c) => c.source!.id)).toEqual(['a.c', 'b.c']);
   });
+
+  it('attaches sources to projects and workspaces too', () => {
+    const src = (id: string, nodeId: string) =>
+      ({ id, notebook_id: nodeId, parent_source_id: null, title: id }) as SourceDto;
+    const tree = buildTree(flat, [src('policy.md', 'wifi'), src('arch.md', 'source')]);
+    expect(tree[0].children.map((c) => c.key)).toContain('s:policy.md');
+    const sourceWs = tree[0].children.find((c) => c.key === 'source')!;
+    expect(sourceWs.children.map((c) => c.key)).toContain('s:arch.md');
+  });
 });

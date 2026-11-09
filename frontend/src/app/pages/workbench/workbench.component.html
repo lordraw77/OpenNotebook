@@ -4,13 +4,13 @@
     <header class="col-head">
       <h2>Sources</h2>
       <span class="spacer"></span>
-      @if (notebookId() && hasRole(selected()!, 'editor')) {
+      @if (selected() && hasRole(selected()!, 'editor')) {
         <a
           mat-icon-button
-          matTooltip="Upload to this notebook"
+          [matTooltip]="'Upload to this ' + selected()!.kind"
           aria-label="Upload"
           routerLink="/upload"
-          [queryParams]="{ notebook: notebookId() }"
+          [queryParams]="{ notebook: selectedId() }"
         >
           <mat-icon>upload_file</mat-icon>
         </a>
@@ -156,11 +156,9 @@
               <mat-icon>{{ icons[kind] }}</mat-icon> New {{ kind }}
             </button>
           }
-          @if (node.kind === 'notebook') {
-            <a mat-menu-item routerLink="/upload" [queryParams]="{ notebook: node.id }"
-              ><mat-icon>upload_file</mat-icon> Upload sources</a
-            >
-          }
+          <a mat-menu-item routerLink="/upload" [queryParams]="{ notebook: node.id }"
+            ><mat-icon>upload_file</mat-icon> Upload sources</a
+          >
           <button mat-menu-item (click)="rename(node)"><mat-icon>edit</mat-icon> Rename</button>
         }
         @if (node.kind === 'project' && node.role) {
