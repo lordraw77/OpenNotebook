@@ -12,8 +12,16 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 
 import { TreeNodeDto } from '../../core/api.models';
 import { ApiService, errorMessage } from '../../core/api.service';
-import { SourceDto, SourcesApi, TERMINAL, UploadResult, formatBytes } from '../../core/sources.api';
-import { KIND_ICONS, SOURCE_ICONS, breadcrumb, hasRole } from '../workbench/tree';
+import {
+  SourceDto,
+  SourcesApi,
+  TERMINAL,
+  UploadResult,
+  formatBytes,
+  statusLabel,
+} from '../../core/sources.api';
+import { KIND_ICONS, breadcrumb, hasRole, sourceIcon } from '../workbench/tree';
+import { TranslatePipe, t } from '../../core/i18n';
 
 // Any file can be dropped: the type is detected from the content on the server.
 const ACCEPT = '';
@@ -21,6 +29,7 @@ const ACCEPT = '';
 @Component({
   selector: 'app-upload',
   imports: [
+    TranslatePipe,
     DatePipe,
     MatCardModule,
     MatFormFieldModule,
@@ -34,16 +43,18 @@ const ACCEPT = '';
   ],
   template: `
     <div class="page">
-      <h1>Upload sources</h1>
+      <h1>{{ 'Upload sources' | t }}</h1>
       <mat-form-field appearance="outline" class="target">
-        <mat-label>Upload to (project, workspace or notebook)</mat-label>
+        <mat-label>{{ 'Upload to (project, workspace or notebook)' | t }}</mat-label>
         <mat-select [value]="target()" (valueChange)="target.set($event)">
           @for (n of notebooks(); track n.id) {
             <mat-option [value]="n.id"
               ><mat-icon>{{ kindIcons[n.kind] }}</mat-icon> {{ label(n) }}</mat-option
             >
           } @empty {
-            <mat-option disabled>Nothing you can upload to: ask for editor access</mat-option>
+            <mat-option disabled>{{
+              'Nothing you can upload to: ask for editor access' | t
+            }}</mat-option>
           }
         </mat-select>
       </mat-form-field>
@@ -58,22 +69,23 @@ const ACCEPT = '';
         (drop)="onDrop($event)"
       >
         <mat-icon>cloud_upload</mat-icon>
-        <p>Drop documents, source code, images or archives here</p>
+        <p>{{ 'Drop documents, source code, images or archives here' | t }}</p>
         <button mat-flat-button [disabled]="!target() || uploading()" (click)="picker.click()">
-          Choose files
+          {{ 'Choose files' | t }}
         </button>
         <input #picker type="file" multiple hidden [accept]="accept" (change)="onPick(picker)" />
         <p class="muted small">
-          PDF (scanned pages via OCR), DOCX, Markdown, text, HTML · code (C, C++, Python, JS/TS,
-          Java, Go, Rust, C#, PHP, Ruby, shell and more) · PNG, JPEG, WebP, TIFF, GIF (OCR +
-          description) · ZIP and TAR archives (each file becomes a source)
+          {{
+            'PDF (scanned pages via OCR), DOCX, Markdown, text, HTML · code (C, C++, Python, JS/TS, Java, Go, Rust, C#, PHP, Ruby, shell and more) · PNG, JPEG, WebP, TIFF, GIF (OCR + description) · ZIP and TAR archives (each file becomes a source)'
+              | t
+          }}
         </p>
       </mat-card>
 
       <mat-card appearance="outlined" class="web" [class.disabled]="!target()">
-        <h2 class="section-inline"><mat-icon>language</mat-icon> Add web pages</h2>
+        <h2 class="section-inline"><mat-icon>language</mat-icon> {{ 'Add web pages' | t }}</h2>
         <mat-form-field appearance="outline" subscriptSizing="dynamic">
-          <mat-label>URLs (one per line)</mat-label>
+          <mat-label>{{ 'URLs (one per line)' | t }}</mat-label>
           <textarea
             matInput
             rows="3"
@@ -85,16 +97,16 @@ const ACCEPT = '';
         </mat-form-field>
         <div class="web-row">
           <mat-form-field appearance="outline" subscriptSizing="dynamic" class="narrow">
-            <mat-label>Follow links</mat-label>
+            <mat-label>{{ 'Follow links' | t }}</mat-label>
             <mat-select [value]="crawlDepth()" (valueChange)="crawlDepth.set($event)">
-              <mat-option [value]="0">No, only these pages</mat-option>
-              <mat-option [value]="1">1 level, same site</mat-option>
-              <mat-option [value]="2">2 levels, same site</mat-option>
+              <mat-option [value]="0">{{ 'No, only these pages' | t }}</mat-option>
+              <mat-option [value]="1">{{ '1 level, same site' | t }}</mat-option>
+              <mat-option [value]="2">{{ '2 levels, same site' | t }}</mat-option>
             </mat-select>
           </mat-form-field>
           @if (crawlDepth() > 0) {
             <mat-form-field appearance="outline" subscriptSizing="dynamic" class="narrow">
-              <mat-label>Max pages</mat-label>
+              <mat-label>{{ 'Max pages' | t }}</mat-label>
               <input
                 matInput
                 type="number"
@@ -111,13 +123,21 @@ const ACCEPT = '';
             [disabled]="!target() || !urlList().length || adding()"
             (click)="addWeb()"
           >
-            <mat-icon>add_link</mat-icon> Add {{ urlList().length || '' }}
-            {{ urlList().length === 1 ? 'page' : 'pages' }}
+            <mat-icon>add_link</mat-icon>
+            {{
+              urlList().length === 1
+                ? ('Add 1 page' | t)
+                : urlList().length
+                  ? ('Add {n} pages' | t: { n: urlList().length })
+                  : ('Add pages' | t)
+            }}
           </button>
         </div>
         <p class="muted small">
-          Pages are fetched by the server: main text only (menus and footers removed), robots.txt is
-          respected when following links, and private network addresses are refused.
+          {{
+            'Pages are fetched by the server: main text only (menus and footers removed), robots.txt is respected when following links, and private network addresses are refused.'
+              | t
+          }}
         </p>
       </mat-card>
 
@@ -135,10 +155,11 @@ const ACCEPT = '';
                 <mat-icon class="bad">block</mat-icon> {{ r.filename }}:
                 <span class="error-text">{{ r.error }}</span>
               } @else if (r.duplicate) {
-                <mat-icon class="muted">content_copy</mat-icon> {{ r.filename }}: already in this
-                notebook
+                <mat-icon class="muted">content_copy</mat-icon>
+                {{ '{name}: already in this notebook' | t: { name: r.filename } }}
               } @else {
-                <mat-icon class="ok">check_circle</mat-icon> {{ r.filename }}: queued for indexing
+                <mat-icon class="ok">check_circle</mat-icon>
+                {{ '{name}: queued for indexing' | t: { name: r.filename } }}
               }
             </li>
           }
@@ -146,27 +167,27 @@ const ACCEPT = '';
       }
 
       @if (target()) {
-        <h2 class="section">Sources here and inside</h2>
+        <h2 class="section">{{ 'Sources here and inside' | t }}</h2>
         <div class="table-wrap">
           <table mat-table [dataSource]="sources()">
             <ng-container matColumnDef="title">
-              <th mat-header-cell *matHeaderCellDef>Source</th>
+              <th mat-header-cell *matHeaderCellDef>{{ 'Source' | t }}</th>
               <td mat-cell *matCellDef="let s">
                 <span class="kind"
-                  ><mat-icon>{{ icons[s.kind] ?? 'description' }}</mat-icon>
-                  {{ s.parent_source_id ? '↳ ' : '' }}{{ s.title }}</span
+                  ><mat-icon>{{ sourceIcon(s) }}</mat-icon> {{ s.parent_source_id ? '↳ ' : ''
+                  }}{{ s.title }}</span
                 >
               </td>
             </ng-container>
             <ng-container matColumnDef="size">
-              <th mat-header-cell *matHeaderCellDef>Size</th>
+              <th mat-header-cell *matHeaderCellDef>{{ 'Size' | t }}</th>
               <td mat-cell *matCellDef="let s">{{ size(s.size_bytes) }}</td>
             </ng-container>
             <ng-container matColumnDef="status">
-              <th mat-header-cell *matHeaderCellDef>Status</th>
+              <th mat-header-cell *matHeaderCellDef>{{ 'Status' | t }}</th>
               <td mat-cell *matCellDef="let s">
                 <span class="status" [class]="s.status" [matTooltip]="s.error?.message ?? ''">{{
-                  s.status
+                  statusLabel(s.status)
                 }}</span>
                 @if (s.warnings.length) {
                   <mat-icon class="warn" [matTooltip]="s.warnings.join(' ')">warning</mat-icon>
@@ -174,17 +195,19 @@ const ACCEPT = '';
               </td>
             </ng-container>
             <ng-container matColumnDef="chunks">
-              <th mat-header-cell *matHeaderCellDef>Chunks</th>
+              <th mat-header-cell *matHeaderCellDef>{{ 'Chunks' | t }}</th>
               <td mat-cell *matCellDef="let s">{{ s.chunk_count }}</td>
             </ng-container>
             <ng-container matColumnDef="added">
-              <th mat-header-cell *matHeaderCellDef>Added</th>
+              <th mat-header-cell *matHeaderCellDef>{{ 'Added' | t }}</th>
               <td mat-cell *matCellDef="let s">{{ s.created_at | date: 'short' }}</td>
             </ng-container>
             <tr mat-header-row *matHeaderRowDef="columns"></tr>
             <tr mat-row *matRowDef="let s; columns: columns"></tr>
             <tr class="mat-row" *matNoDataRow>
-              <td class="mat-cell muted" [attr.colspan]="columns.length">No sources yet.</td>
+              <td class="mat-cell muted" [attr.colspan]="columns.length">
+                {{ 'No sources yet.' | t }}
+              </td>
             </tr>
           </table>
         </div>
@@ -312,6 +335,7 @@ const ACCEPT = '';
   `,
 })
 export class UploadComponent {
+  protected readonly statusLabel = statusLabel;
   private readonly api = inject(ApiService);
   private readonly sourcesApi = inject(SourcesApi);
 
@@ -331,7 +355,7 @@ export class UploadComponent {
   readonly dragOver = signal(false);
   readonly columns = ['title', 'size', 'status', 'chunks', 'added'];
   protected readonly accept = ACCEPT;
-  protected readonly icons = SOURCE_ICONS;
+  protected readonly sourceIcon = sourceIcon;
   readonly urls = signal('');
   readonly urlList = computed(() =>
     this.urls()
@@ -391,8 +415,13 @@ export class UploadComponent {
   }
 
   private async loadSources(notebookId: string | null): Promise<void> {
+    // sources directly in the target node (capped: the tree pages through very large nodes)
     this.sources.set(
-      notebookId ? (await this.sourcesApi.list(notebookId)).filter((s) => s.kind !== 'note') : [],
+      notebookId
+        ? (await this.sourcesApi.page({ nodeId: notebookId, limit: 200 })).items.filter(
+            (s) => s.kind !== 'note',
+          )
+        : [],
     );
   }
 

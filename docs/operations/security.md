@@ -26,9 +26,12 @@ Threat model and design: [../analysis/04-threat-model.md](../analysis/04-threat-
 
 ## Accepted risks
 
-| Id | Component | Why it is accepted | Review |
-|---|---|---|---|
-| CVE-2026-112907…112940 (13 ids, see `.pip-audit-ignore`) | `filelock` 3.32.7, pulled by LiteLLM 1.108 (`filelock<4`) through `huggingface-hub` | Local-user attacks (symlink / ACL races) on shared lock directories. Containers run a single non-root user with a private tmpfs `/tmp` and a read-only root; the lock code is only used by LiteLLM's proxy CLI and Hugging Face downloads, which OpenNotebook never runs. | when LiteLLM allows `filelock>=4.2.1` |
+None at the moment (`.pip-audit-ignore` and `.trivyignore` are empty).
+
+Resolved: 13 CVEs of `filelock` < 4.2.1, a transitive dependency of LiteLLM, are fixed by forcing
+`filelock==4.2.1` with a uv override (`[tool.uv] override-dependencies` in `backend/pyproject.toml`): LiteLLM
+1.108.0 declares `filelock<4`, while LiteLLM 1.108.3 relaxed it to `<5`. Remove the override when LiteLLM is
+upgraded.
 
 ## Reporting
 

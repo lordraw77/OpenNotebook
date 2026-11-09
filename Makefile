@@ -19,8 +19,8 @@ help: ## Show this help
 secrets: ## Create .env from .env.example if missing and fill empty internal secrets (idempotent)
 	@scripts/gen-secrets.sh $(ENV_FILE)
 
-build: ## Build all OpenNotebook images (web, api, worker)
-	$(COMPOSE) build
+build: ## Build all OpenNotebook images (web, api, worker, converter)
+	$(COMPOSE) --profile converter build
 
 up: ## Start the stack (profiles from COMPOSE_PROFILES in .env)
 	$(COMPOSE) up -d
@@ -66,14 +66,15 @@ fmt: ## Format backend and frontend code
 	cd frontend && npx prettier --write "src/**/*.{ts,html,scss}"
 
 check-no-models: ## Verify that images contain no model weights or ML runtimes
-	@scripts/check-no-models.sh $(REGISTRY)/opennotebook-api:$(VERSION) $(REGISTRY)/opennotebook-worker:$(VERSION)
+	@scripts/check-no-models.sh $(REGISTRY)/opennotebook-api:$(VERSION) $(REGISTRY)/opennotebook-worker:$(VERSION) \
+	  $(REGISTRY)/opennotebook-converter:$(VERSION)
 
 bundle: build check-no-models ## Create a release tarball (images + compose + .env.example + install.sh)
 	@scripts/bundle.sh $(VERSION) $(REGISTRY)
 
 release: build check-no-models ## Push images (VERSION and latest): make release REGISTRY=<namespace>
 	@test "$(VERSION)" != "dev" || (echo "Set VERSION=x.y.z" && exit 1)
-	for img in web api worker; do \
+	for img in web api worker converter; do \
 	  docker tag $(REGISTRY)/opennotebook-$$img:$(VERSION) $(REGISTRY)/opennotebook-$$img:latest && \
 	  docker push $(REGISTRY)/opennotebook-$$img:$(VERSION) && docker push $(REGISTRY)/opennotebook-$$img:latest; \
 	done

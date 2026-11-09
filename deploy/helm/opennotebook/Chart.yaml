@@ -1,0 +1,12 @@
+apiVersion: v2
+name: opennotebook
+description: >-
+  OpenNotebook - self-hosted knowledge workspace with grounded, cited RAG chat, knowledge graph and wiki.
+  No models inside: every model call goes to an external provider.
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+home: https://github.com/lordraw77/OpenNotebook
+sources:
+  - https://github.com/lordraw77/OpenNotebook
+keywords: [rag, knowledge-base, llm, notebook, qdrant]

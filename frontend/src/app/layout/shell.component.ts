@@ -10,6 +10,7 @@ import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { map } from 'rxjs';
 
 import { AuthService } from '../core/auth.service';
+import { LANGS, Lang, TranslatePipe, currentLang, setLang, t } from '../core/i18n';
 import { ThemeMode, ThemeService } from '../core/theme.service';
 
 interface NavItem {
@@ -29,16 +30,17 @@ interface NavItem {
     MatIconModule,
     MatMenuModule,
     MatTooltipModule,
+    TranslatePipe,
   ],
   template: `
     <mat-toolbar class="topbar">
-      <a class="brand" routerLink="/workbench" aria-label="OpenNotebook home">
+      <a class="brand" routerLink="/workbench" [attr.aria-label]="'OpenNotebook home' | t">
         <span class="logo"><mat-icon>auto_stories</mat-icon></span>
         @if (!compact()) {
           <span class="gradient-text">OpenNotebook</span>
         }
       </a>
-      <nav aria-label="Main">
+      <nav [attr.aria-label]="'Main' | t">
         @for (item of nav; track item.link) {
           <a
             class="nav-link"
@@ -61,23 +63,41 @@ interface NavItem {
       <button
         mat-icon-button
         [matMenuTriggerFor]="themeMenu"
-        matTooltip="Theme"
-        aria-label="Choose theme"
+        [matTooltip]="'Theme' | t"
+        [attr.aria-label]="'Choose theme' | t"
       >
         <mat-icon>{{ theme.icon() }}</mat-icon>
       </button>
       <mat-menu #themeMenu="matMenu">
-        @for (t of themes; track t.mode) {
-          <button mat-menu-item (click)="theme.set(t.mode)">
-            <mat-icon>{{ t.icon }}</mat-icon>
-            <span>{{ t.label }}</span>
-            @if (theme.mode() === t.mode) {
+        @for (item of themes; track item.mode) {
+          <button mat-menu-item (click)="theme.set(item.mode)">
+            <mat-icon>{{ item.icon }}</mat-icon>
+            <span>{{ item.label }}</span>
+            @if (theme.mode() === item.mode) {
               <mat-icon class="check">check</mat-icon>
             }
           </button>
         }
       </mat-menu>
-      <button class="account" [matMenuTriggerFor]="userMenu" aria-label="Account menu">
+      <button
+        mat-icon-button
+        [matMenuTriggerFor]="langMenu"
+        [matTooltip]="'Language' | t"
+        [attr.aria-label]="'Choose language' | t"
+      >
+        <mat-icon>translate</mat-icon>
+      </button>
+      <mat-menu #langMenu="matMenu">
+        @for (item of langs; track item.lang) {
+          <button mat-menu-item [attr.lang]="item.lang" (click)="chooseLang(item.lang)">
+            <span>{{ item.label }}</span>
+            @if (lang === item.lang) {
+              <mat-icon class="check">check</mat-icon>
+            }
+          </button>
+        }
+      </mat-menu>
+      <button class="account" [matMenuTriggerFor]="userMenu" [attr.aria-label]="'Account menu' | t">
         <span class="avatar">{{ initials() }}</span>
         @if (!compact()) {
           <span class="account-name">{{ auth.user()?.display_name }}</span>
@@ -85,7 +105,9 @@ interface NavItem {
       </button>
       <mat-menu #userMenu="matMenu">
         <div class="menu-email">{{ auth.user()?.email }}</div>
-        <button mat-menu-item (click)="auth.logout()"><mat-icon>logout</mat-icon> Sign out</button>
+        <button mat-menu-item (click)="auth.logout()">
+          <mat-icon>logout</mat-icon> {{ 'Sign out' | t }}
+        </button>
       </mat-menu>
     </mat-toolbar>
     <main class="content"><router-outlet /></main>
@@ -249,17 +271,25 @@ export class ShellComponent {
   );
 
   protected readonly nav: NavItem[] = [
-    { link: '/workbench', icon: 'forum', label: 'Workbench' },
-    { link: '/upload', icon: 'upload_file', label: 'Upload' },
-    { link: '/wiki', icon: 'hub', label: 'Wiki' },
-    { link: '/status', icon: 'monitor_heart', label: 'RAG Status' },
-    { link: '/settings', icon: 'settings', label: 'Settings' },
+    { link: '/workbench', icon: 'forum', label: t('Workbench') },
+    { link: '/upload', icon: 'upload_file', label: t('Upload') },
+    { link: '/wiki', icon: 'hub', label: t('Wiki') },
+    { link: '/status', icon: 'monitor_heart', label: t('RAG Status') },
+    { link: '/settings', icon: 'settings', label: t('Settings') },
   ];
 
+  /** Language names are shown in their own language. */
+  protected readonly langs = LANGS;
+  protected readonly lang = currentLang();
+
+  protected chooseLang(lang: Lang): void {
+    if (lang !== this.lang) setLang(lang);
+  }
+
   protected readonly themes: { mode: ThemeMode; icon: string; label: string }[] = [
-    { mode: 'system', icon: 'brightness_auto', label: 'System' },
-    { mode: 'light', icon: 'light_mode', label: 'Light' },
-    { mode: 'dark', icon: 'dark_mode', label: 'Dark' },
+    { mode: 'system', icon: 'brightness_auto', label: t('System') },
+    { mode: 'light', icon: 'light_mode', label: t('Light') },
+    { mode: 'dark', icon: 'dark_mode', label: t('Dark') },
   ];
 
   protected readonly initials = computed(() => {

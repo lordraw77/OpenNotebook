@@ -13,10 +13,12 @@ import { MatTableModule } from '@angular/material/table';
 import { User } from '../../core/api.models';
 import { ApiService, errorMessage } from '../../core/api.service';
 import { AuthService } from '../../core/auth.service';
+import { TranslatePipe, t } from '../../core/i18n';
 
 @Component({
   selector: 'app-users',
   imports: [
+    TranslatePipe,
     FormsModule,
     MatTableModule,
     MatCardModule,
@@ -28,24 +30,26 @@ import { AuthService } from '../../core/auth.service';
     MatIconModule,
   ],
   template: `
-    <h2 class="section">Users</h2>
+    <h2 class="section">{{ 'Users' | t }}</h2>
     <p class="muted">
-      Access to projects, workspaces and notebooks is granted from the Workbench tree (node menu →
-      Share).
+      {{
+        'Access to projects, workspaces and notebooks is granted from the Workbench tree (node menu → Share).'
+          | t
+      }}
     </p>
     <mat-card appearance="outlined">
       <mat-card-content>
         <form class="form" (ngSubmit)="create()">
           <mat-form-field appearance="outline">
-            <mat-label>Email</mat-label>
+            <mat-label>{{ 'Email' | t }}</mat-label>
             <input matInput type="email" name="email" [(ngModel)]="draft.email" required />
           </mat-form-field>
           <mat-form-field appearance="outline">
-            <mat-label>Display name</mat-label>
+            <mat-label>{{ 'Display name' | t }}</mat-label>
             <input matInput name="display_name" [(ngModel)]="draft.display_name" required />
           </mat-form-field>
           <mat-form-field appearance="outline">
-            <mat-label>Initial password</mat-label>
+            <mat-label>{{ 'Initial password' | t }}</mat-label>
             <input
               matInput
               type="password"
@@ -55,15 +59,17 @@ import { AuthService } from '../../core/auth.service';
               autocomplete="new-password"
               required
             />
-            <mat-hint>at least 12 characters</mat-hint>
+            <mat-hint>{{ 'at least 12 characters' | t }}</mat-hint>
           </mat-form-field>
-          <mat-checkbox name="is_admin" [(ngModel)]="draft.is_admin">Administrator</mat-checkbox>
+          <mat-checkbox name="is_admin" [(ngModel)]="draft.is_admin">{{
+            'Administrator' | t
+          }}</mat-checkbox>
           <button
             mat-flat-button
             type="submit"
             [disabled]="!draft.email || !draft.display_name || draft.password.length < 12"
           >
-            <mat-icon>person_add</mat-icon> Create user
+            <mat-icon>person_add</mat-icon> {{ 'Create user' | t }}
           </button>
         </form>
       </mat-card-content>
@@ -72,32 +78,32 @@ import { AuthService } from '../../core/auth.service';
     <div class="table-wrap">
       <table mat-table [dataSource]="users()">
         <ng-container matColumnDef="email">
-          <th mat-header-cell *matHeaderCellDef>Email</th>
+          <th mat-header-cell *matHeaderCellDef>{{ 'Email' | t }}</th>
           <td mat-cell *matCellDef="let u">{{ u.email }}</td>
         </ng-container>
         <ng-container matColumnDef="name">
-          <th mat-header-cell *matHeaderCellDef>Name</th>
+          <th mat-header-cell *matHeaderCellDef>{{ 'Name' | t }}</th>
           <td mat-cell *matCellDef="let u">{{ u.display_name }}</td>
         </ng-container>
         <ng-container matColumnDef="admin">
-          <th mat-header-cell *matHeaderCellDef>Admin</th>
+          <th mat-header-cell *matHeaderCellDef>{{ 'Admin' | t }}</th>
           <td mat-cell *matCellDef="let u">
             <mat-slide-toggle
               [checked]="u.is_admin"
               [disabled]="u.id === me()"
               (change)="update(u, { is_admin: $event.checked })"
-              aria-label="Administrator"
+              [attr.aria-label]="'Administrator' | t"
             ></mat-slide-toggle>
           </td>
         </ng-container>
         <ng-container matColumnDef="active">
-          <th mat-header-cell *matHeaderCellDef>Active</th>
+          <th mat-header-cell *matHeaderCellDef>{{ 'Active' | t }}</th>
           <td mat-cell *matCellDef="let u">
             <mat-slide-toggle
               [checked]="u.is_active"
               [disabled]="u.id === me()"
               (change)="update(u, { is_active: $event.checked })"
-              aria-label="Active"
+              [attr.aria-label]="'Active' | t"
             ></mat-slide-toggle>
           </td>
         </ng-container>
@@ -151,10 +157,10 @@ export class UsersComponent {
     try {
       await this.api.createUser(this.draft);
       this.draft = { email: '', display_name: '', password: '', is_admin: false };
-      this.snack.open('User created', 'Close', { duration: 3000 });
+      this.snack.open(t('User created'), t('Close'), { duration: 3000 });
       await this.load();
     } catch (err) {
-      this.snack.open(errorMessage(err), 'Close', { duration: 5000 });
+      this.snack.open(errorMessage(err), t('Close'), { duration: 5000 });
     }
   }
 
@@ -162,7 +168,7 @@ export class UsersComponent {
     try {
       await this.api.updateUser(u.id, body);
     } catch (err) {
-      this.snack.open(errorMessage(err), 'Close', { duration: 5000 });
+      this.snack.open(errorMessage(err), t('Close'), { duration: 5000 });
     }
     await this.load();
   }

@@ -15,6 +15,7 @@ scope, with every statement linked to the exact passage it comes from.
 | [`lordraw/opennotebook-web`](https://hub.docker.com/r/lordraw/opennotebook-web) | Web UI (Angular) on unprivileged nginx; proxies `/api` to the api |
 | [`lordraw/opennotebook-api`](https://hub.docker.com/r/lordraw/opennotebook-api) | REST + streaming API (FastAPI); also runs the one-shot `migrate` job |
 | [`lordraw/opennotebook-worker`](https://hub.docker.com/r/lordraw/opennotebook-worker) | Ingestion worker (Celery): parsing, OCR, web fetching, embeddings, knowledge graph, summaries |
+| [`lordraw/opennotebook-converter`](https://hub.docker.com/r/lordraw/opennotebook-converter) | Optional isolated document converter (headless LibreOffice): office files to PDF |
 
 ## No models inside
 
@@ -66,19 +67,21 @@ Open `http://<host>:8080` and sign in with `BOOTSTRAP_ADMIN_EMAIL` and the gener
 **Settings → Models** (chains per phase), **Workbench** (create a project, upload sources, ask).
 
 The Compose file starts the three OpenNotebook images plus PostgreSQL 18, Qdrant, SeaweedFS (S3 storage) and
-Redis. Optional profiles: `observability` (Prometheus + Grafana) and `auth` (Keycloak):
+Redis. Optional profiles: `observability` (Prometheus, Grafana, Jaeger), `auth` (Keycloak) and `converter`
+(office documents to PDF, with `CONVERTER_URL=http://converter:8080`):
 `docker compose --profile observability up -d`.
 
 ## Tags
 
 | Tag | Content |
 |---|---|
+| `1.0.0` | First stable release: observability, operations, isolated office converter, lazy source tree, Italian UI, Helm chart |
 | `0.5.1` | Fix: sources can be uploaded to projects and workspaces, not only notebooks |
 | `0.5.0` | M0–M5: adds groups, single sign-on (OIDC), provider policy per project, zero-downtime embedding change, deep research mode |
 | `0.4.0` | M0–M4: foundations, ingestion, grounded chat, extended ingestion, knowledge graph and wiki |
 | `latest` | The most recent release |
 
-Pin an exact version in production (`VERSION=0.5.1` in `.env`). The three images of a deployment must have the
+Pin an exact version in production (`VERSION=1.0.0` in `.env`). The three images of a deployment must have the
 same version. Images are `linux/amd64`.
 
 {{IMAGE_DETAILS}}

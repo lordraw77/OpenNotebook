@@ -9,11 +9,13 @@ import { MatProgressBarModule } from '@angular/material/progress-bar';
 
 import { errorMessage } from '../../core/api.service';
 import { SearchHit, SourcesApi } from '../../core/sources.api';
+import { TranslatePipe, t } from '../../core/i18n';
 
 /** Hybrid search over the active sources in scope (the same retrieval that feeds the chat). */
 @Component({
   selector: 'app-search-panel',
   imports: [
+    TranslatePipe,
     FormsModule,
     MatFormFieldModule,
     MatInputModule,
@@ -31,15 +33,17 @@ import { SearchHit, SourcesApi } from '../../core/sources.api';
         <p class="error-text">{{ error() }}</p>
       }
       @if (searched() && !busy() && hits().length === 0 && !error()) {
-        <p class="muted">No passages found in the active sources of this scope.</p>
+        <p class="muted">{{ 'No passages found in the active sources of this scope.' | t }}</p>
       }
       @if (!searched()) {
         <div class="placeholder">
           <mat-icon>manage_search</mat-icon>
-          <p>Search the active sources in the selected scope.</p>
+          <p>{{ 'Search the active sources in the selected scope.' | t }}</p>
           <p class="muted">
-            The same hybrid retrieval feeds the chat: use it to check which passages a question
-            finds.
+            {{
+              'The same hybrid retrieval feeds the chat: use it to check which passages a question finds.'
+                | t
+            }}
           </p>
         </div>
       }
@@ -67,18 +71,18 @@ import { SearchHit, SourcesApi } from '../../core/sources.api';
         </article>
       }
       @if (model()) {
-        <p class="muted model">Embedding model: {{ model() }}</p>
+        <p class="muted model">{{ 'Embedding model: {model}' | t: { model: model() } }}</p>
       }
     </div>
     <form class="composer" (ngSubmit)="run()">
       <mat-form-field appearance="outline" class="grow" subscriptSizing="dynamic">
         <mat-label>{{
-          scopeId() ? 'Search the sources in scope' : 'Select a scope in the tree first'
+          scopeId() ? ('Search the sources in scope' | t) : ('Select a scope in the tree first' | t)
         }}</mat-label>
         <input matInput name="q" [(ngModel)]="query" [disabled]="!scopeId()" maxlength="2000" />
       </mat-form-field>
       <button mat-flat-button type="submit" [disabled]="!scopeId() || !query.trim() || busy()">
-        <mat-icon>search</mat-icon> Search
+        <mat-icon>search</mat-icon> {{ 'Search' | t }}
       </button>
     </form>
   `,

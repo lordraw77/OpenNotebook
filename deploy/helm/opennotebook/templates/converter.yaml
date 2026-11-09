@@ -1,0 +1,40 @@
+{{- if .Values.converter.enabled }}
+{{- $fn := include "on.fullname" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fn }}-converter
+  labels: {{- include "on.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {{- include "on.selector" (list . "converter") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "on.selector" (list . "converter") | nindent 8 }}
+    spec:
+      {{- include "on.podCommon" . | nindent 6 }}
+      containers:
+        - name: converter
+          image: {{ include "on.image" (list . "converter") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - { name: CONVERTER_CONCURRENCY, value: {{ .Values.converter.concurrency | quote }} }
+            - { name: CONVERTER_TIMEOUT_SECONDS, value: {{ .Values.converter.timeoutSeconds | quote }} }
+            - { name: CONVERTER_MAX_MB, value: {{ .Values.config.UPLOAD_MAX_MB | default "500" | quote }} }
+          ports: [{ name: http, containerPort: 8080 }]
+          readinessProbe: { httpGet: { path: /health, port: http } }
+          securityContext: {{- include "on.containerSecurity" . | nindent 12 }}
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+          resources: {{- toYaml .Values.converter.resources | nindent 12 }}
+      volumes: [{ name: tmp, emptyDir: {} }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fn }}-converter
+  labels: {{- include "on.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "on.selector" (list . "converter") | nindent 4 }}
+  ports: [{ name: http, port: 8080, targetPort: http }]
+{{- end }}

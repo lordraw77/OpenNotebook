@@ -1,14 +1,14 @@
 <div class="workbench" [class.left-closed]="!leftOpen()" [class.right-closed]="!rightOpen()">
   <!-- Left column: hierarchy and sources -->
-  <aside class="col left" aria-label="Sources">
+  <aside class="col left" [attr.aria-label]="'Sources' | t">
     <header class="col-head">
-      <h2>Sources</h2>
+      <h2>{{ 'Sources' | t }}</h2>
       <span class="spacer"></span>
       @if (selected() && hasRole(selected()!, 'editor')) {
         <a
           mat-icon-button
-          [matTooltip]="'Upload to this ' + selected()!.kind"
-          aria-label="Upload"
+          [matTooltip]="'Upload to this {kind}' | t: { kind: kindLabel(selected()!.kind) }"
+          [attr.aria-label]="'Upload' | t"
           routerLink="/upload"
           [queryParams]="{ notebook: selectedId() }"
         >
@@ -17,16 +17,16 @@
       }
       <button
         mat-icon-button
-        matTooltip="New project"
-        aria-label="New project"
+        [matTooltip]="'New project' | t"
+        [attr.aria-label]="'New project' | t"
         (click)="createProject()"
       >
         <mat-icon>create_new_folder</mat-icon>
       </button>
       <button
         mat-icon-button
-        matTooltip="Collapse"
-        aria-label="Collapse sources"
+        [matTooltip]="'Collapse' | t"
+        [attr.aria-label]="'Collapse sources' | t"
         (click)="leftOpen.set(false)"
       >
         <mat-icon>left_panel_close</mat-icon>
@@ -34,7 +34,9 @@
     </header>
 
     @if (tree().length === 0) {
-      <p class="muted empty">No projects yet. Create one to start organizing sources.</p>
+      <p class="muted empty">
+        {{ 'No projects yet. Create one to start organizing sources.' | t }}
+      </p>
     }
 
     <mat-tree
@@ -64,8 +66,24 @@
       <mat-tree-node
         matTreeNodePadding
         [matTreeNodePaddingIndent]="16"
+        *matTreeNodeDef="let item; when: isPlaceholder"
+        class="tnode placeholder"
+      >
+        <span class="toggle-space"></span>
+        @if (item.placeholder === 'loading') {
+          <span class="muted loading-row">{{ 'Loading…' | t }}</span>
+        } @else {
+          <button mat-button class="more-row" (click)="loadMore(item)">
+            <mat-icon>expand_more</mat-icon> {{ 'Load more' | t }}
+          </button>
+        }
+      </mat-tree-node>
+      <mat-tree-node
+        matTreeNodePadding
+        [matTreeNodePaddingIndent]="16"
         *matTreeNodeDef="let item; when: hasChild"
         [isExpandable]="true"
+        (expandedChange)="onExpand(item, $event)"
         class="tnode"
         [class.selected]="
           item.source
@@ -78,7 +96,9 @@
           mat-icon-button
           matTreeNodeToggle
           class="toggle"
-          [attr.aria-label]="'Toggle ' + (item.source ? item.source.title : item.node.name)"
+          [attr.aria-label]="
+            'Toggle {name}' | t: { name: item.source ? item.source.title : item.node.name }
+          "
         >
           <mat-icon>chevron_right</mat-icon>
         </button>
@@ -105,15 +125,15 @@
           [disabled]="!hasRole(node, 'editor')"
           (click)="$event.stopPropagation()"
           (change)="toggleActive(node, $event.checked)"
-          [matTooltip]="node.active ? 'Included in search' : 'Excluded from search'"
-          [attr.aria-label]="'Include ' + node.name + ' in search'"
+          [matTooltip]="node.active ? ('Included in search' | t) : ('Excluded from search' | t)"
+          [attr.aria-label]="'Include {name} in search' | t: { name: node.name }"
         ></mat-slide-toggle>
         <button
           mat-icon-button
           [matMenuTriggerFor]="nodeMenu"
           [matMenuTriggerData]="{ node }"
           (click)="$event.stopPropagation()"
-          aria-label="Node actions"
+          [attr.aria-label]="'Node actions' | t"
         >
           <mat-icon>more_vert</mat-icon>
         </button>
@@ -127,10 +147,12 @@
         type="button"
         (click)="$event.stopPropagation(); openSource(src.id)"
       >
-        <mat-icon class="kind">{{ sourceIcons[src.kind] ?? 'description' }}</mat-icon>
+        <mat-icon class="kind">{{ sourceIcon(src) }}</mat-icon>
         <span class="name" [title]="src.original_path ?? src.title">{{ shortTitle(src) }}</span>
         @if (!isTerminal(src)) {
-          <mat-icon class="state spin" [matTooltip]="src.status">progress_activity</mat-icon>
+          <mat-icon class="state spin" [matTooltip]="statusLabel(src.status)"
+            >progress_activity</mat-icon
+          >
         } @else if (src.status === 'failed') {
           <mat-icon class="state failed" [matTooltip]="src.error?.message ?? 'failed'"
             >error</mat-icon
@@ -142,8 +164,8 @@
         [disabled]="!hasRole(item.node, 'editor')"
         (click)="$event.stopPropagation()"
         (change)="toggleSource(src, $event.checked)"
-        [matTooltip]="src.active ? 'Included in search' : 'Excluded from search'"
-        [attr.aria-label]="'Include ' + src.title + ' in search'"
+        [matTooltip]="src.active ? ('Included in search' | t) : ('Excluded from search' | t)"
+        [attr.aria-label]="'Include {name} in search' | t: { name: src.title }"
       ></mat-slide-toggle>
       <span class="menu-space"></span>
     </ng-template>
@@ -153,33 +175,39 @@
         @if (hasRole(node, 'editor')) {
           @for (kind of childKinds[node.kind]; track kind) {
             <button mat-menu-item (click)="createChild(node, kind)">
-              <mat-icon>{{ icons[kind] }}</mat-icon> New {{ kind }}
+              <mat-icon>{{ icons[kind] }}</mat-icon> {{ newKindLabel(kind) }}
             </button>
           }
           <a mat-menu-item routerLink="/upload" [queryParams]="{ notebook: node.id }"
-            ><mat-icon>upload_file</mat-icon> Upload sources</a
+            ><mat-icon>upload_file</mat-icon> {{ 'Upload sources' | t }}</a
           >
-          <button mat-menu-item (click)="rename(node)"><mat-icon>edit</mat-icon> Rename</button>
+          <button mat-menu-item (click)="rename(node)">
+            <mat-icon>edit</mat-icon> {{ 'Rename' | t }}
+          </button>
         }
         @if (node.kind === 'project' && node.role) {
           <button mat-menu-item (click)="projectSettings(node)">
-            <mat-icon>tune</mat-icon> Project settings…
+            <mat-icon>tune</mat-icon> {{ 'Project settings…' | t }}
           </button>
         }
         @if (hasRole(node, 'owner')) {
-          <button mat-menu-item (click)="share(node)"><mat-icon>share</mat-icon> Share…</button>
+          <button mat-menu-item (click)="share(node)">
+            <mat-icon>share</mat-icon> {{ 'Share…' | t }}
+          </button>
           <mat-divider></mat-divider>
-          <button mat-menu-item (click)="remove(node)"><mat-icon>delete</mat-icon> Delete</button>
+          <button mat-menu-item (click)="remove(node)">
+            <mat-icon>delete</mat-icon> {{ 'Delete' | t }}
+          </button>
         }
       </ng-template>
     </mat-menu>
   </aside>
 
   <!-- Center column: search now, grounded chat in M2 -->
-  <section class="col center" aria-label="Chat">
+  <section class="col center" [attr.aria-label]="'Chat' | t">
     <header class="col-head">
       @if (!leftOpen()) {
-        <button mat-icon-button aria-label="Show sources" (click)="leftOpen.set(true)">
+        <button mat-icon-button [attr.aria-label]="'Show sources' | t" (click)="leftOpen.set(true)">
           <mat-icon>left_panel_open</mat-icon>
         </button>
       }
@@ -188,24 +216,30 @@
         hideSingleSelectionIndicator
         [value]="mode()"
         (change)="mode.set($event.value)"
-        aria-label="Center panel"
+        [attr.aria-label]="'Center panel' | t"
       >
-        <mat-button-toggle value="chat"><mat-icon>forum</mat-icon> Chat</mat-button-toggle>
-        <mat-button-toggle value="search"><mat-icon>search</mat-icon> Search</mat-button-toggle>
+        <mat-button-toggle value="chat"
+          ><mat-icon>forum</mat-icon> {{ 'Chat' | t }}</mat-button-toggle
+        >
+        <mat-button-toggle value="search"
+          ><mat-icon>search</mat-icon> {{ 'Search' | t }}</mat-button-toggle
+        >
       </mat-button-toggle-group>
-      <nav class="crumbs" aria-label="Scope">
+      <nav class="crumbs" [attr.aria-label]="'Scope' | t">
         @for (n of path(); track n.id; let last = $last) {
           <span [class.current]="last">{{ n.name }}</span>
           @if (!last) {
             <mat-icon class="sep">chevron_right</mat-icon>
           }
         } @empty {
-          <span class="muted">Select a project, workspace or notebook to set the scope</span>
+          <span class="muted">{{
+            'Select a project, workspace or notebook to set the scope' | t
+          }}</span>
         }
       </nav>
       <span class="spacer"></span>
       <mat-form-field appearance="outline" class="model-select" subscriptSizing="dynamic">
-        <mat-label>Chat model</mat-label>
+        <mat-label>{{ 'Chat model' | t }}</mat-label>
         <mat-select
           [value]="chatModelId()"
           (valueChange)="selectModel($event)"
@@ -215,7 +249,7 @@
             <mat-option [value]="m.id">
               {{ m.provider_name }} / {{ m.model }}
               @if (i === 0) {
-                <span class="muted">· default</span>
+                <span class="muted">{{ '· default' | t }}</span>
               }
             </mat-option>
           }
@@ -225,7 +259,7 @@
         }
       </mat-form-field>
       @if (!rightOpen()) {
-        <button mat-icon-button aria-label="Show notes" (click)="rightOpen.set(true)">
+        <button mat-icon-button [attr.aria-label]="'Show notes' | t" (click)="rightOpen.set(true)">
           <mat-icon>right_panel_open</mat-icon>
         </button>
       }
@@ -263,14 +297,14 @@
   </section>
 
   <!-- Right column: notes -->
-  <aside class="col right" aria-label="Notes">
+  <aside class="col right" [attr.aria-label]="'Notes' | t">
     <header class="col-head">
-      <h2>Notes</h2>
+      <h2>{{ 'Notes' | t }}</h2>
       <span class="spacer"></span>
       <button
         mat-icon-button
-        matTooltip="Collapse"
-        aria-label="Collapse notes"
+        [matTooltip]="'Collapse' | t"
+        [attr.aria-label]="'Collapse notes' | t"
         (click)="rightOpen.set(false)"
       >
         <mat-icon>right_panel_close</mat-icon>

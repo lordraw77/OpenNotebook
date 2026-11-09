@@ -1,0 +1,242 @@
+{
+ "version": 1,
+ "notes": "Graph evaluation set over eval/graph/corpus (fictional, generated once). Each multi_hop question needs a chain project -> lead -> system -> data centre stated in three different documents; the team profile (bridge) shares no words with the question, so it reaches the context only through the knowledge graph.",
+ "questions": [
+  {
+   "id": "g1",
+   "type": "multi_hop",
+   "question": "In which data centre is the data of Project Orion hosted?",
+   "expected_sources": [
+    "project-orion.md",
+    "team-mara.md",
+    "system-kestrel.md"
+   ],
+   "bridge_sources": [
+    "team-mara.md"
+   ],
+   "expected_terms": [
+    "Frankfurt"
+   ]
+  },
+  {
+   "id": "g1b",
+   "type": "multi_hop",
+   "question": "How many people are on the team that runs the database behind Project Orion, and at what time is it backed up?",
+   "expected_sources": [
+    "project-orion.md",
+    "team-mara.md",
+    "system-kestrel.md"
+   ],
+   "bridge_sources": [
+    "team-mara.md"
+   ],
+   "expected_terms": [
+    "6",
+    "02:00"
+   ]
+  },
+  {
+   "id": "g2",
+   "type": "multi_hop",
+   "question": "In which data centre is the data of Project Halcyon hosted?",
+   "expected_sources": [
+    "project-halcyon.md",
+    "team-tobias.md",
+    "system-peregrine.md"
+   ],
+   "bridge_sources": [
+    "team-tobias.md"
+   ],
+   "expected_terms": [
+    "Lisbon"
+   ]
+  },
+  {
+   "id": "g3",
+   "type": "multi_hop",
+   "question": "In which data centre is the data of Project Juniper hosted?",
+   "expected_sources": [
+    "project-juniper.md",
+    "team-aiko.md",
+    "system-osprey.md"
+   ],
+   "bridge_sources": [
+    "team-aiko.md"
+   ],
+   "expected_terms": [
+    "Montreal"
+   ]
+  },
+  {
+   "id": "g3b",
+   "type": "multi_hop",
+   "question": "How many people are on the team that runs the database behind Project Juniper, and at what time is it backed up?",
+   "expected_sources": [
+    "project-juniper.md",
+    "team-aiko.md",
+    "system-osprey.md"
+   ],
+   "bridge_sources": [
+    "team-aiko.md"
+   ],
+   "expected_terms": [
+    "9",
+    "01:15"
+   ]
+  },
+  {
+   "id": "g4",
+   "type": "multi_hop",
+   "question": "In which data centre is the data of Project Basalt hosted?",
+   "expected_sources": [
+    "project-basalt.md",
+    "team-rafael.md",
+    "system-merlin.md"
+   ],
+   "bridge_sources": [
+    "team-rafael.md"
+   ],
+   "expected_terms": [
+    "Singapore"
+   ]
+  },
+  {
+   "id": "g5",
+   "type": "multi_hop",
+   "question": "In which data centre is the data of Project Cobalt hosted?",
+   "expected_sources": [
+    "project-cobalt.md",
+    "team-ingrid.md",
+    "system-harrier.md"
+   ],
+   "bridge_sources": [
+    "team-ingrid.md"
+   ],
+   "expected_terms": [
+    "Dublin"
+   ]
+  },
+  {
+   "id": "g5b",
+   "type": "multi_hop",
+   "question": "How many people are on the team that runs the database behind Project Cobalt, and at what time is it backed up?",
+   "expected_sources": [
+    "project-cobalt.md",
+    "team-ingrid.md",
+    "system-harrier.md"
+   ],
+   "bridge_sources": [
+    "team-ingrid.md"
+   ],
+   "expected_terms": [
+    "7",
+    "00:45"
+   ]
+  },
+  {
+   "id": "g6",
+   "type": "multi_hop",
+   "question": "In which data centre is the data of Project Lantern hosted?",
+   "expected_sources": [
+    "project-lantern.md",
+    "team-dev.md",
+    "system-goshawk.md"
+   ],
+   "bridge_sources": [
+    "team-dev.md"
+   ],
+   "expected_terms": [
+    "Warsaw"
+   ]
+  },
+  {
+   "id": "g7",
+   "type": "multi_hop",
+   "question": "In which data centre is the data of Project Sextant hosted?",
+   "expected_sources": [
+    "project-sextant.md",
+    "team-lucia.md",
+    "system-kite.md"
+   ],
+   "bridge_sources": [
+    "team-lucia.md"
+   ],
+   "expected_terms": [
+    "Melbourne"
+   ]
+  },
+  {
+   "id": "g7b",
+   "type": "multi_hop",
+   "question": "How many people are on the team that runs the database behind Project Sextant, and at what time is it backed up?",
+   "expected_sources": [
+    "project-sextant.md",
+    "team-lucia.md",
+    "system-kite.md"
+   ],
+   "bridge_sources": [
+    "team-lucia.md"
+   ],
+   "expected_terms": [
+    "8",
+    "02:40"
+   ]
+  },
+  {
+   "id": "g8",
+   "type": "multi_hop",
+   "question": "In which data centre is the data of Project Tundra hosted?",
+   "expected_sources": [
+    "project-tundra.md",
+    "team-samuel.md",
+    "system-condor.md"
+   ],
+   "bridge_sources": [
+    "team-samuel.md"
+   ],
+   "expected_terms": [
+    "Oslo"
+   ]
+  },
+  {
+   "id": "gf1",
+   "type": "fact",
+   "question": "Who leads Project Halcyon?",
+   "expected_sources": [
+    "project-halcyon.md"
+   ],
+   "expected_terms": [
+    "Tobias Lindqvist"
+   ]
+  },
+  {
+   "id": "gf2",
+   "type": "fact",
+   "question": "Where is the Merlin cluster hosted?",
+   "expected_sources": [
+    "system-merlin.md"
+   ],
+   "expected_terms": [
+    "Singapore"
+   ]
+  },
+  {
+   "id": "gf3",
+   "type": "fact",
+   "question": "How long are Condor backups kept?",
+   "expected_sources": [
+    "system-condor.md"
+   ],
+   "expected_terms": [
+    "35 days"
+   ]
+  },
+  {
+   "id": "go1",
+   "type": "out_of_domain",
+   "question": "Which cloud provider hosts Project Zephyr?",
+   "expected_sources": [],
+   "expected_terms": []
+  }
+ ]
+}

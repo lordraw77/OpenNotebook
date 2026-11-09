@@ -1,3 +1,2 @@
-# Accepted image vulnerabilities (one id per line); reasons in docs/operations/security.md.
-# filelock < 4.2.1, pinned by litellm 1.108 (see .pip-audit-ignore)
-CVE-2026-112940
+# Accepted image vulnerabilities (one id per line), with reasons in docs/operations/security.md.
+# None at the moment.

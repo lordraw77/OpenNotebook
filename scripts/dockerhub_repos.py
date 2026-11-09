@@ -25,6 +25,7 @@ IMAGES = {
     "opennotebook-web": ("web", "Web UI", "OpenNotebook web UI (Angular + nginx): self-hosted RAG workspace with grounded, cited chat"),
     "opennotebook-api": ("api", "API", "OpenNotebook API (FastAPI): grounded RAG chat, knowledge graph, multi-provider model gateway"),
     "opennotebook-worker": ("worker", "Ingestion worker", "OpenNotebook ingestion worker: parsing, OCR, web, embeddings, knowledge graph, summaries"),
+    "opennotebook-converter": ("converter", "Document converter", "OpenNotebook isolated office-to-PDF converter (headless LibreOffice) for ingestion"),
 }
 
 

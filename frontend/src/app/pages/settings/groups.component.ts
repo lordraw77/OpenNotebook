@@ -10,11 +10,13 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 
 import { AdminApi, GroupDto, MemberDto } from '../../core/admin.api';
 import { ApiService, errorMessage } from '../../core/api.service';
+import { TranslatePipe, t } from '../../core/i18n';
 
 /** Groups (administrators): share nodes with a group instead of single users. */
 @Component({
   selector: 'app-groups',
   imports: [
+    TranslatePipe,
     FormsModule,
     MatAutocompleteModule,
     MatButtonModule,
@@ -25,21 +27,22 @@ import { ApiService, errorMessage } from '../../core/api.service';
   ],
   template: `
     <p class="muted">
-      Share a project, workspace or notebook with a group (Share… in the Workbench): every member
-      gets the role, on that node and everything inside it. Groups marked SSO are kept in sync with
-      the identity provider at each sign-in.
+      {{
+        'Share a project, workspace or notebook with a group (Share… in the Workbench): every member gets the role, on that node and everything inside it. Groups marked SSO are kept in sync with the identity provider at each sign-in.'
+          | t
+      }}
     </p>
     <form class="create" (ngSubmit)="create()">
       <mat-form-field appearance="outline" subscriptSizing="dynamic">
-        <mat-label>New group</mat-label>
+        <mat-label>{{ 'New group' | t }}</mat-label>
         <input matInput name="name" [(ngModel)]="name" maxlength="200" />
       </mat-form-field>
       <mat-form-field appearance="outline" subscriptSizing="dynamic" class="grow">
-        <mat-label>Description</mat-label>
+        <mat-label>{{ 'Description' | t }}</mat-label>
         <input matInput name="description" [(ngModel)]="description" maxlength="1000" />
       </mat-form-field>
       <button mat-flat-button type="submit" [disabled]="!name.trim()">
-        <mat-icon>group_add</mat-icon> Create
+        <mat-icon>group_add</mat-icon> {{ 'Create' | t }}
       </button>
     </form>
 
@@ -60,12 +63,12 @@ import { ApiService, errorMessage } from '../../core/api.service';
               }
             </span>
             @if (g.source === 'oidc') {
-              <span class="badge" matTooltip="Synchronized from single sign-on">SSO</span>
+              <span class="badge" [matTooltip]="'Synchronized from single sign-on' | t">SSO</span>
             }
-            <span class="count" matTooltip="Members">{{ g.members }}</span>
+            <span class="count" [matTooltip]="'Members' | t">{{ g.members }}</span>
           </button>
         } @empty {
-          <p class="muted">No groups yet.</p>
+          <p class="muted">{{ 'No groups yet.' | t }}</p>
         }
       </section>
 
@@ -76,8 +79,8 @@ import { ApiService, errorMessage } from '../../core/api.service';
             <span class="spacer"></span>
             <button
               mat-icon-button
-              matTooltip="Delete group (its grants are removed)"
-              aria-label="Delete group"
+              [matTooltip]="'Delete group (its grants are removed)' | t"
+              [attr.aria-label]="'Delete group' | t"
               (click)="remove(g)"
             >
               <mat-icon>delete</mat-icon>
@@ -85,7 +88,7 @@ import { ApiService, errorMessage } from '../../core/api.service';
           </header>
           <div class="add">
             <mat-form-field appearance="outline" subscriptSizing="dynamic" class="grow">
-              <mat-label>Add a member</mat-label>
+              <mat-label>{{ 'Add a member' | t }}</mat-label>
               <input
                 matInput
                 [(ngModel)]="query"
@@ -108,12 +111,16 @@ import { ApiService, errorMessage } from '../../core/api.service';
               <span class="grow"
                 >{{ m.display_name }} <span class="muted">· {{ m.email }}</span></span
               >
-              <button mat-icon-button aria-label="Remove member" (click)="removeMember(g, m)">
+              <button
+                mat-icon-button
+                [attr.aria-label]="'Remove member' | t"
+                (click)="removeMember(g, m)"
+              >
                 <mat-icon>close</mat-icon>
               </button>
             </div>
           } @empty {
-            <p class="muted">No members.</p>
+            <p class="muted">{{ 'No members.' | t }}</p>
           }
         </section>
       }
@@ -242,16 +249,21 @@ export class GroupsComponent {
       this.description = '';
       await this.load();
       await this.open(g);
-    }, 'Group created');
+    }, t('Group created'));
   }
 
   async remove(g: GroupDto): Promise<void> {
-    if (!confirm(`Delete group “${g.name}”? Access granted to the group is removed.`)) return;
+    if (
+      !confirm(
+        t('Delete group “{name}”? Access granted to the group is removed.', { name: g.name }),
+      )
+    )
+      return;
     await this.run(async () => {
       await this.admin.deleteGroup(g.id);
       this.selected.set(null);
       await this.load();
-    }, 'Group deleted');
+    }, t('Group deleted'));
   }
 
   async search(q: string | MemberDto): Promise<void> {
@@ -281,9 +293,9 @@ export class GroupsComponent {
   private async run(action: () => Promise<void>, ok?: string): Promise<void> {
     try {
       await action();
-      if (ok) this.snack.open(ok, 'Close', { duration: 3000 });
+      if (ok) this.snack.open(ok, t('Close'), { duration: 3000 });
     } catch (err) {
-      this.snack.open(errorMessage(err), 'Close', { duration: 5000 });
+      this.snack.open(errorMessage(err), t('Close'), { duration: 5000 });
     }
   }
 }

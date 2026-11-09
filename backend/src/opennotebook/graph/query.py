@@ -8,7 +8,7 @@ displayed name is the most frequent visible surface form.
 from __future__ import annotations
 
 import uuid
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 
 from sqlalchemy import Select, func, or_, select
@@ -176,43 +176,81 @@ async def entity_detail(session: AsyncSession, user: User, scope: Node, entity_i
     }
 
 
+def score_expansion(
+    seed_weight: dict[uuid.UUID, float],
+    relations: list[tuple[uuid.UUID, uuid.UUID, uuid.UUID]],
+    neighbour_chunks: dict[uuid.UUID, list[uuid.UUID]],
+) -> dict[uuid.UUID, float]:
+    """Scores candidate passages for graph expansion.
+
+    `seed_weight` holds the entities of the retrieved passages, weighted by the rank of the best passage that
+    mentions them (1 for the top passage, 1/2, 1/3...). The passage stating a relation scores the sum of the
+    weights of its seed ends - a passage linking two relevant entities (the bridge of a multi-hop question)
+    beats one hanging off a marginal entity; a passage mentioning a non-seed neighbour scores half the weight
+    of the seed it hangs off.
+    """
+    score: dict[uuid.UUID, float] = defaultdict(float)
+    for src, dst, evidence in relations:
+        score[evidence] += seed_weight.get(src, 0.0) + seed_weight.get(dst, 0.0)
+        for seed, neighbour in ((src, dst), (dst, src)):
+            if seed in seed_weight and neighbour not in seed_weight:
+                for chunk_id in neighbour_chunks.get(neighbour, []):
+                    score[chunk_id] += seed_weight[seed] / 2
+    return score
+
+
 async def expansion_hits(
     session: AsyncSession, user: User, scope: Node, chunk_ids: list[uuid.UUID], limit: int
 ) -> list[SearchHit]:
     """Passages about the 1-hop neighbours of the entities mentioned in the retrieved passages.
 
+    `chunk_ids` are in retrieval order: entities of higher-ranked passages weigh more (see `score_expansion`).
     The relation evidence and the neighbours' mentions are both restricted to visible sources.
     """
     if not chunk_ids or limit <= 0:
         return []
     visible = await visible_sources(session, user, scope)
-    seeds = select(EntityMention.entity_id).where(
-        EntityMention.chunk_id.in_(chunk_ids), EntityMention.source_id.in_(visible)
-    )
-    relations = (
+    rank = {cid: i for i, cid in enumerate(chunk_ids)}
+    seed_weight: dict[uuid.UUID, float] = {}
+    for entity_id, chunk_id in (
         await session.execute(
-            select(Relation.src_id, Relation.dst_id, Relation.chunk_id).where(
-                or_(Relation.src_id.in_(seeds), Relation.dst_id.in_(seeds)), Relation.source_id.in_(visible)
+            select(EntityMention.entity_id, EntityMention.chunk_id).where(
+                EntityMention.chunk_id.in_(chunk_ids), EntityMention.source_id.in_(visible)
             )
         )
-    ).all()
-    seed_ids = set((await session.scalars(seeds)).all())
-    score: Counter[uuid.UUID] = Counter()
-    for src, dst, evidence in relations:
-        score[evidence] += 2  # the passage stating the relation
-        neighbour = dst if src in seed_ids else src
-        if neighbour not in seed_ids:
-            for chunk_id in (
+    ).all():
+        weight = 1 / (1 + rank[chunk_id])
+        seed_weight[entity_id] = max(seed_weight.get(entity_id, 0.0), weight)
+    if not seed_weight:
+        return []
+    seeds = list(seed_weight)
+    relations = [
+        (src, dst, evidence)
+        for src, dst, evidence in (
+            await session.execute(
+                select(Relation.src_id, Relation.dst_id, Relation.chunk_id).where(
+                    or_(Relation.src_id.in_(seeds), Relation.dst_id.in_(seeds)),
+                    Relation.source_id.in_(visible),
+                )
+            )
+        ).all()
+    ]
+    neighbours = {e for src, dst, _ in relations for e in (src, dst) if e not in seed_weight}
+    neighbour_chunks: dict[uuid.UUID, list[uuid.UUID]] = {}
+    for entity_id in neighbours:
+        neighbour_chunks[entity_id] = list(
+            (
                 await session.scalars(
                     select(EntityMention.chunk_id)
-                    .where(EntityMention.entity_id == neighbour, EntityMention.source_id.in_(visible))
+                    .where(EntityMention.entity_id == entity_id, EntityMention.source_id.in_(visible))
                     .limit(3)
                 )
-            ).all():
-                score[chunk_id] += 1
+            ).all()
+        )
+    score = score_expansion(seed_weight, relations, neighbour_chunks)
     for cid in chunk_ids:
         score.pop(cid, None)
-    best = [cid for cid, _ in score.most_common(limit)]
+    best = [cid for cid, _ in sorted(score.items(), key=lambda item: -item[1])[:limit]]
     if not best:
         return []
     rows = (

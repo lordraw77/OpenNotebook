@@ -15,11 +15,28 @@ import {
   TreeNodeDto,
   User,
 } from './api.models';
+import { i18nKey, t } from './i18n';
+
+/** Server messages users meet most often; others are shown in English as the API returns them. */
+export const SERVER_MESSAGES = [
+  i18nKey('Invalid email or password'),
+  i18nKey('Too many login attempts, retry later'),
+  i18nKey('User disabled'),
+  i18nKey('Password sign-in is disabled: use single sign-on'),
+  i18nKey('Too many questions: wait a minute and retry'),
+  i18nKey('Too many searches: wait a minute and retry'),
+  i18nKey('Deep research limit reached for this hour'),
+  i18nKey('A sibling with the same name already exists'),
+  i18nKey('A project must keep at least one owner'),
+  i18nKey('Administrator role required'),
+  i18nKey('Ingestion already in progress'),
+];
 
 export function errorMessage(err: unknown): string {
   if (err instanceof HttpErrorResponse) {
+    if (err.status === 0) return t('The server cannot be reached. Check the connection and retry.');
     const detail = err.error?.detail;
-    if (typeof detail === 'string') return detail;
+    if (typeof detail === 'string') return t(detail);
     if (Array.isArray(detail)) return detail.map((d) => d.msg ?? String(d)).join('; ');
     return `${err.status} ${err.statusText}`;
   }

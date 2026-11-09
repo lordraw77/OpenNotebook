@@ -2,8 +2,9 @@
 
 Error handling:
   - UnsupportedContent / ParseError -> source `failed`, not retried;
-  - GatewayError (provider down, rate limited, no model configured) -> RetryableError, retried with backoff by
-    the worker; the source keeps its current status and the last error;
+  - GatewayError (provider down, rate limited, no model configured) and an unreachable or busy
+    converter -> RetryableError, retried with backoff by the worker; the source keeps its current status
+    and the last error;
   - anything else -> source `failed` with the error class name.
 """
 
@@ -21,9 +22,11 @@ from opennotebook.config import get_settings
 from opennotebook.ingestion import PIPELINE_VERSION, queue
 from opennotebook.ingestion.archives import ArchiveRejected, Limits, Member, iter_members
 from opennotebook.ingestion.chunker import chunk_document, embedding_text
+from opennotebook.ingestion.convert import ConverterUnavailable
 from opennotebook.ingestion.document import DocumentBuilder, ParsedDocument
 from opennotebook.ingestion.parsers import (
     ParseError,
+    Sniffed,
     UnsupportedContent,
     decode_text,
     ensure_content,
@@ -299,12 +302,13 @@ async def _ingest_source(
         await _try_switch(session, project_id, index)
         return SourceStatus.ready
 
-    except TransientFetchError as exc:
+    except (TransientFetchError, ConverterUnavailable) as exc:
+        code = "converter_unavailable" if isinstance(exc, ConverterUnavailable) else "fetch_error"
         await session.rollback()
         source = await session.get(Source, source_id)
         job_row = await session.get(IngestionJob, job_id)
         if source is not None:
-            source.error = {"code": "fetch_error", "message": str(exc)[:1000], "attempt": attempt}
+            source.error = {"code": code, "message": str(exc)[:1000], "attempt": attempt}
         if job_row is not None:
             job_row.status = "failed"
             job_row.error = str(exc)[:2000]
@@ -428,9 +432,15 @@ async def _parse_source(
     if source.kind == SourceKind.web:
         return await _parse_web(session, source, store)
     raw = await store.get(blob_key(source.id, "original"))
+    # the PDF rendition is set again below when the source is (still) converted
+    source.metadata_ = {k: v for k, v in (source.metadata_ or {}).items() if k != "rendition"}
     if source.kind == SourceKind.note:
         return parse(raw, "markdown", source.title)
     sniffed = sniff(raw, source.original_path or source.title)
+    if sniffed.format == "office" or (
+        sniffed.format == "docx" and settings.converter_url and settings.convert_docx
+    ):
+        return await _parse_office(session, source, raw, sniffed, store, gateway, project_id, job)
     if sniffed.format in ("zip", "tar"):
         return await _expand_archive(session, source, raw, sniffed.format, store)
     if sniffed.format == "image":
@@ -449,6 +459,45 @@ async def _parse_source(
 
         return parse_code(decode_text(raw), sniffed.language, source.title, settings.chunk_size_tokens)
     return parse(raw, sniffed.format, source.title)
+
+
+async def _parse_office(
+    session: AsyncSession,
+    source: Source,
+    raw: bytes,
+    sniffed: Sniffed,
+    store: BlobStore,
+    gateway: ModelGateway,
+    project_id: uuid.UUID,
+    job: IngestionJob,
+) -> ParsedDocument:
+    """Converts with the isolated converter, then parses the PDF (page anchors, PDF viewer)."""
+    from opennotebook.ingestion.convert import to_pdf
+
+    try:
+        pdf = await to_pdf(raw, sniffed.extension or sniffed.format)
+    except ParseError as exc:
+        if sniffed.format != "docx":
+            raise
+        doc = parse(raw, "docx", source.title)  # DOCX is still readable without pages
+        doc.warnings.append(f"{exc}; indexed without page numbers")
+        return doc
+    key = blob_key(source.id, "pdf")
+    await store.put(key, pdf, "application/pdf")
+    await session.merge(
+        SourceBlob(
+            source_id=source.id,
+            role="pdf",
+            object_key=key,
+            size_bytes=len(pdf),
+            content_type="application/pdf",
+        )
+    )
+    source.metadata_ = {**(source.metadata_ or {}), "rendition": "pdf"}
+    first = _pdf_first_pass(pdf, source.title)
+    if first.scanned_pages:  # e.g. slides made of pictures
+        return await _pdf_with_ocr(pdf, first, source.title, gateway, project_id, job)
+    return ensure_content(first)
 
 
 def _pdf_first_pass(raw: bytes, title: str) -> ParsedDocument:

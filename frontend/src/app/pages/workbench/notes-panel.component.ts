@@ -11,8 +11,9 @@ import { MatSnackBar } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 
 import { errorMessage } from '../../core/api.service';
-import { Citation, NoteDto, SourcesApi } from '../../core/sources.api';
+import { Citation, NoteDto, SourcesApi, statusLabel } from '../../core/sources.api';
 import { AnswerViewComponent } from './answer-view.component';
+import { TranslatePipe, t } from '../../core/i18n';
 
 interface Draft {
   id: string | null;
@@ -25,6 +26,7 @@ interface Draft {
 @Component({
   selector: 'app-notes-panel',
   imports: [
+    TranslatePipe,
     DatePipe,
     FormsModule,
     MatButtonModule,
@@ -38,29 +40,33 @@ interface Draft {
   ],
   template: `
     @if (!notebookId()) {
-      <p class="muted pad">Select a notebook to see and write its notes.</p>
+      <p class="muted pad">{{ 'Select a notebook to see and write its notes.' | t }}</p>
     } @else {
       @if (canEdit() && !draft()) {
         <div class="pad">
-          <button mat-stroked-button (click)="edit(null)"><mat-icon>add</mat-icon> New note</button>
+          <button mat-stroked-button (click)="edit(null)">
+            <mat-icon>add</mat-icon> {{ 'New note' | t }}
+          </button>
         </div>
       }
       @if (draft(); as d) {
         <form class="editor pad" (ngSubmit)="save(d)">
           <mat-form-field appearance="outline" subscriptSizing="dynamic">
-            <mat-label>Title</mat-label>
+            <mat-label>{{ 'Title' | t }}</mat-label>
             <input matInput name="title" [(ngModel)]="d.title" maxlength="300" required />
           </mat-form-field>
           <mat-form-field appearance="outline" subscriptSizing="dynamic">
-            <mat-label>Note (Markdown)</mat-label>
+            <mat-label>{{ 'Note (Markdown)' | t }}</mat-label>
             <textarea matInput name="body" [(ngModel)]="d.body_md" rows="8"></textarea>
           </mat-form-field>
-          <mat-checkbox name="indexed" [(ngModel)]="d.indexed"
-            >Index as source (searchable)</mat-checkbox
-          >
+          <mat-checkbox name="indexed" [(ngModel)]="d.indexed">{{
+            'Index as source (searchable)' | t
+          }}</mat-checkbox>
           <div class="row">
-            <button mat-button type="button" (click)="draft.set(null)">Cancel</button>
-            <button mat-flat-button type="submit" [disabled]="!d.title.trim()">Save</button>
+            <button mat-button type="button" (click)="draft.set(null)">{{ 'Cancel' | t }}</button>
+            <button mat-flat-button type="submit" [disabled]="!d.title.trim()">
+              {{ 'Save' | t }}
+            </button>
           </div>
         </form>
       }
@@ -70,15 +76,20 @@ interface Draft {
             <strong>{{ n.title }}</strong>
             <span class="spacer"></span>
             @if (n.indexed) {
-              <span class="cap" [matTooltip]="'Index status: ' + (n.source_status ?? 'pending')">{{
-                n.source_status ?? 'queued'
-              }}</span>
+              <span
+                class="cap"
+                [matTooltip]="
+                  'Index status: {status}'
+                    | t: { status: statusLabel(n.source_status ?? 'pending') }
+                "
+                >{{ statusLabel(n.source_status ?? 'queued') }}</span
+              >
             }
             @if (canEdit()) {
-              <button mat-icon-button aria-label="Edit note" (click)="edit(n)">
+              <button mat-icon-button [attr.aria-label]="'Edit note' | t" (click)="edit(n)">
                 <mat-icon>edit</mat-icon>
               </button>
-              <button mat-icon-button aria-label="Delete note" (click)="remove(n)">
+              <button mat-icon-button [attr.aria-label]="'Delete note' | t" (click)="remove(n)">
                 <mat-icon>delete</mat-icon>
               </button>
             }
@@ -99,7 +110,7 @@ interface Draft {
         </article>
       } @empty {
         @if (!draft()) {
-          <p class="muted pad">No notes in this notebook yet.</p>
+          <p class="muted pad">{{ 'No notes in this notebook yet.' | t }}</p>
         }
       }
     }
@@ -149,6 +160,7 @@ interface Draft {
   `,
 })
 export class NotesPanelComponent {
+  protected readonly statusLabel = statusLabel;
   private readonly api = inject(SourcesApi);
   private readonly snack = inject(MatSnackBar);
 
@@ -198,18 +210,18 @@ export class NotesPanelComponent {
       await this.load(nb);
       this.changed.emit();
     } catch (err) {
-      this.snack.open(errorMessage(err), 'Close', { duration: 5000 });
+      this.snack.open(errorMessage(err), t('Close'), { duration: 5000 });
     }
   }
 
   async remove(n: NoteDto): Promise<void> {
-    if (!confirm(`Delete note “${n.title}”?`)) return;
+    if (!confirm(t('Delete note “{title}”?', { title: n.title }))) return;
     try {
       await this.api.deleteNote(n.id);
       await this.load(this.notebookId());
       this.changed.emit();
     } catch (err) {
-      this.snack.open(errorMessage(err), 'Close', { duration: 5000 });
+      this.snack.open(errorMessage(err), t('Close'), { duration: 5000 });
     }
   }
 }

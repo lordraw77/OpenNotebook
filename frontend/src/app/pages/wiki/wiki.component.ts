@@ -19,6 +19,7 @@ import { AnswerViewComponent } from '../workbench/answer-view.component';
 import { SourceViewerComponent } from '../workbench/source-viewer.component';
 import { breadcrumb } from '../workbench/tree';
 import { LaidEdge, bounds, layoutGraph } from './graph-layout';
+import { TranslatePipe, t } from '../../core/i18n';
 
 const TYPE_COLORS: Record<string, string> = {
   person: '#e879f9',
@@ -43,6 +44,7 @@ const TYPE_COLORS: Record<string, string> = {
 @Component({
   selector: 'app-wiki',
   imports: [
+    TranslatePipe,
     DatePipe,
     FormsModule,
     MatButtonModule,
@@ -60,7 +62,7 @@ const TYPE_COLORS: Record<string, string> = {
     <div class="wiki">
       <aside class="side">
         <mat-form-field appearance="outline" subscriptSizing="dynamic">
-          <mat-label>Scope</mat-label>
+          <mat-label>{{ 'Scope' | t }}</mat-label>
           <mat-select [value]="scopeId()" (valueChange)="setScope($event)">
             @for (n of scopes(); track n.id) {
               <mat-option [value]="n.id">{{ label(n) }}</mat-option>
@@ -68,7 +70,7 @@ const TYPE_COLORS: Record<string, string> = {
           </mat-select>
         </mat-form-field>
         <mat-form-field appearance="outline" subscriptSizing="dynamic">
-          <mat-label>Find an entity</mat-label>
+          <mat-label>{{ 'Find an entity' | t }}</mat-label>
           <mat-icon matPrefix>search</mat-icon>
           <input matInput [ngModel]="query()" (ngModelChange)="query.set($event)" />
         </mat-form-field>
@@ -87,7 +89,7 @@ const TYPE_COLORS: Record<string, string> = {
         @if (loadingList()) {
           <mat-progress-bar mode="indeterminate"></mat-progress-bar>
         }
-        <nav class="list" aria-label="Entities">
+        <nav class="list" [attr.aria-label]="'Entities' | t">
           @for (e of filtered(); track e.id) {
             <button
               type="button"
@@ -97,13 +99,15 @@ const TYPE_COLORS: Record<string, string> = {
             >
               <mat-icon [style.color]="color(e.type)">{{ icon(e.type) }}</mat-icon>
               <span class="name">{{ e.name }}</span>
-              <span class="count" matTooltip="Mentions">{{ e.mentions }}</span>
+              <span class="count" [matTooltip]="'Mentions' | t">{{ e.mentions }}</span>
             </button>
           } @empty {
             @if (!loadingList()) {
               <p class="muted pad">
-                No entities yet. They are extracted after indexing when a graph extraction model is
-                configured (Settings → Models); source code needs no model.
+                {{
+                  'No entities yet. They are extracted after indexing when a graph extraction model is configured (Settings → Models); source code needs no model.'
+                    | t
+                }}
               </p>
             }
           }
@@ -116,14 +120,16 @@ const TYPE_COLORS: Record<string, string> = {
             hideSingleSelectionIndicator
             [value]="view()"
             (change)="view.set($event.value)"
-            aria-label="View"
+            [attr.aria-label]="'View' | t"
           >
-            <mat-button-toggle value="graph"><mat-icon>hub</mat-icon> Graph</mat-button-toggle>
+            <mat-button-toggle value="graph"
+              ><mat-icon>hub</mat-icon> {{ 'Graph' | t }}</mat-button-toggle
+            >
             <mat-button-toggle value="page" [disabled]="!entityId()"
-              ><mat-icon>article</mat-icon> Page</mat-button-toggle
+              ><mat-icon>article</mat-icon> {{ 'Page' | t }}</mat-button-toggle
             >
           </mat-button-toggle-group>
-          <span class="muted">{{ entities().length }} entities in scope</span>
+          <span class="muted">{{ '{n} entities in scope' | t: { n: entities().length } }}</span>
         </header>
 
         @if (viewing(); as c) {
@@ -135,7 +141,7 @@ const TYPE_COLORS: Record<string, string> = {
         } @else if (view() === 'graph') {
           <div class="graph-wrap">
             @if (laid().nodes.length === 0) {
-              <p class="muted pad">Nothing to show in this scope yet.</p>
+              <p class="muted pad">{{ 'Nothing to show in this scope yet.' | t }}</p>
             }
             <svg
               class="graph"
@@ -146,7 +152,7 @@ const TYPE_COLORS: Record<string, string> = {
               (pointerup)="panEnd()"
               (pointerleave)="panEnd()"
               role="img"
-              aria-label="Knowledge graph"
+              [attr.aria-label]="'Knowledge graph' | t"
             >
               @for (e of laid().edges; track $index) {
                 <line
@@ -173,7 +179,12 @@ const TYPE_COLORS: Record<string, string> = {
                   @if (n.r > 9 || hover() === n.id || n.id === entityId()) {
                     <text [attr.y]="n.r + 13">{{ n.name }}</text>
                   }
-                  <title>{{ n.name }} ({{ n.type }}, {{ n.mentions }} mentions)</title>
+                  <title>
+                    {{
+                      '{name} ({type}, {n} mentions)'
+                        | t: { name: n.name, type: n.type, n: n.mentions }
+                    }}
+                  </title>
                 </g>
               }
             </svg>
@@ -186,17 +197,17 @@ const TYPE_COLORS: Record<string, string> = {
                 <h1>{{ d.name }}</h1>
                 <div class="muted">
                   {{ d.type }} · {{ d.mention_count }}
-                  {{ d.mention_count === 1 ? 'mention' : 'mentions' }}
+                  {{ d.mention_count === 1 ? ('mention' | t) : ('mentions' | t) }}
                   @if (d.aliases.length) {
-                    · also: {{ d.aliases.join(', ') }}
+                    · {{ 'also: {names}' | t: { names: d.aliases.join(', ') } }}
                   }
                 </div>
               </div>
               <span class="spacer"></span>
               <button
                 mat-icon-button
-                matTooltip="Rewrite the page"
-                aria-label="Rewrite the page"
+                [matTooltip]="'Rewrite the page' | t"
+                [attr.aria-label]="'Rewrite the page' | t"
                 [disabled]="writing()"
                 (click)="loadWiki(d.id, true)"
               >
@@ -208,7 +219,7 @@ const TYPE_COLORS: Record<string, string> = {
               @if (writing()) {
                 <div class="muted">
                   <mat-progress-bar mode="indeterminate"></mat-progress-bar>
-                  Writing the page from the passages you can read…
+                  {{ 'Writing the page from the passages you can read…' | t }}
                 </div>
               } @else if (wikiError()) {
                 <p class="error-text">{{ wikiError() }}</p>
@@ -222,17 +233,17 @@ const TYPE_COLORS: Record<string, string> = {
                   (cite)="viewing.set($event)"
                 />
                 <p class="muted small">
-                  Written by {{ w.model_label }}
+                  {{ 'Written by {model}' | t: { model: w.model_label } }}
                   @if (w.generated_at) {
                     · {{ w.generated_at | date: 'short' }}
                   }
-                  · only from sources you can read
+                  {{ '· only from sources you can read' | t }}
                 </p>
               }
             </section>
 
             @if (d.related.length) {
-              <h2>Related</h2>
+              <h2>{{ 'Related' | t }}</h2>
               <div class="related">
                 @for (r of d.related; track r.entity_id + r.relation + r.direction) {
                   <button
@@ -251,7 +262,7 @@ const TYPE_COLORS: Record<string, string> = {
               </div>
             }
 
-            <h2>Mentioned in</h2>
+            <h2>{{ 'Mentioned in' | t }}</h2>
             <div class="mentions">
               @for (m of d.mentions; track m.chunk_id) {
                 <button type="button" class="mention" (click)="viewing.set(m)">

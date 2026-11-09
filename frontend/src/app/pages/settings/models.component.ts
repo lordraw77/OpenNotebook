@@ -17,6 +17,7 @@ import {
 } from '../../core/api.models';
 import { ApiService, errorMessage } from '../../core/api.service';
 import { AuthService } from '../../core/auth.service';
+import { TranslatePipe, i18nKey, t } from '../../core/i18n';
 
 interface PhaseEditor {
   phase: ModelPhase;
@@ -27,19 +28,23 @@ interface PhaseEditor {
 }
 
 const PHASE_HELP: Record<ModelPhase, string> = {
-  chat: 'Answers in the Workbench. Users can pick any enabled chat model; this chain is the default and the fallback order.',
-  summary: 'Source summaries and suggested questions generated after ingestion.',
-  graph_extraction: 'Entity and relation extraction for the knowledge graph.',
-  vision: 'Descriptions of images and figures.',
-  ocr: 'Text extraction from images and scanned pages (OCR models or vision models).',
-  embedding:
+  chat: i18nKey(
+    'Answers in the Workbench. Users can pick any enabled chat model; this chain is the default and the fallback order.',
+  ),
+  summary: i18nKey('Source summaries and suggested questions generated after ingestion.'),
+  graph_extraction: i18nKey('Entity and relation extraction for the knowledge graph.'),
+  vision: i18nKey('Descriptions of images and figures.'),
+  ocr: i18nKey('Text extraction from images and scanned pages (OCR models or vision models).'),
+  embedding: i18nKey(
     'Vectors for semantic search. One model per index, no fallback: changing it requires re-indexing.',
-  rerank: 'Optional re-ordering of retrieved passages. Leave empty to disable.',
+  ),
+  rerank: i18nKey('Optional re-ordering of retrieved passages. Leave empty to disable.'),
 };
 
 @Component({
   selector: 'app-models',
   imports: [
+    TranslatePipe,
     FormsModule,
     MatCardModule,
     MatSelectModule,
@@ -51,30 +56,35 @@ const PHASE_HELP: Record<ModelPhase, string> = {
   template: `
     <div class="toolbar row">
       <mat-form-field appearance="outline" subscriptSizing="dynamic" class="scope">
-        <mat-label>Configure</mat-label>
+        <mat-label>{{ 'Configure' | t }}</mat-label>
         <mat-select
           [value]="projectId() ?? GLOBAL"
           (valueChange)="setScope($event === GLOBAL ? null : $event)"
         >
-          <mat-option [value]="GLOBAL">Global defaults (all projects)</mat-option>
+          <mat-option [value]="GLOBAL">{{ 'Global defaults (all projects)' | t }}</mat-option>
           @for (p of projects(); track p.id) {
-            <mat-option [value]="p.id">Project: {{ p.name }}</mat-option>
+            <mat-option [value]="p.id">{{ 'Project: {name}' | t: { name: p.name } }}</mat-option>
           }
         </mat-select>
       </mat-form-field>
       <span class="muted">
         @if (projectId()) {
-          A project override replaces the global chain for this project only. Empty override = use
-          global defaults.
+          {{
+            'A project override replaces the global chain for this project only. Empty override = use global defaults.'
+              | t
+          }}
         } @else {
-          Defaults used by every project without its own override.
+          {{ 'Defaults used by every project without its own override.' | t }}
         }
       </span>
     </div>
     @if (!canEdit()) {
       <p class="muted">
-        Read only: {{ projectId() ? 'project owners' : 'administrators' }} can change this
-        configuration.
+        {{
+          projectId()
+            ? ('Read only: project owners can change this configuration.' | t)
+            : ('Read only: administrators can change this configuration.' | t)
+        }}
       </p>
     }
     @if (error()) {
@@ -85,23 +95,23 @@ const PHASE_HELP: Record<ModelPhase, string> = {
       @for (e of editors(); track e.phase) {
         <mat-card appearance="outlined">
           <mat-card-header>
-            <mat-card-title>{{ labels[e.phase] }}</mat-card-title>
+            <mat-card-title>{{ labels[e.phase] | t }}</mat-card-title>
             <mat-card-subtitle>
               @switch (e.assignment.source) {
                 @case ('project') {
-                  Using project override
+                  {{ 'Using project override' | t }}
                 }
                 @case ('global') {
-                  {{ projectId() ? 'Using global default' : 'Configured' }}
+                  {{ projectId() ? ('Using global default' | t) : ('Configured' | t) }}
                 }
                 @default {
-                  Not configured
+                  {{ 'Not configured' | t }}
                 }
               }
             </mat-card-subtitle>
           </mat-card-header>
           <mat-card-content>
-            <p class="muted help">{{ help[e.phase] }}</p>
+            <p class="muted help">{{ help[e.phase] | t }}</p>
             <ol class="chain">
               @for (
                 m of e.chain;
@@ -114,11 +124,13 @@ const PHASE_HELP: Record<ModelPhase, string> = {
                   <span class="model">
                     <strong>{{ m.provider_name }}</strong> / {{ m.model }}
                     @if (m.embedding_dim) {
-                      <span class="cap">dim {{ m.embedding_dim }}</span>
+                      <span class="cap">{{ 'dim {n}' | t: { n: m.embedding_dim } }}</span>
                     }
                     @if (!m.available) {
-                      <span class="cap warn" matTooltip="No longer listed by the provider"
-                        >unavailable</span
+                      <span
+                        class="cap warn"
+                        [matTooltip]="'No longer listed by the provider' | t"
+                        >{{ 'unavailable' | t }}</span
                       >
                     }
                   </span>
@@ -127,7 +139,7 @@ const PHASE_HELP: Record<ModelPhase, string> = {
                       mat-icon-button
                       [disabled]="first"
                       (click)="move(e, i, -1)"
-                      aria-label="Move up"
+                      [attr.aria-label]="'Move up' | t"
                     >
                       <mat-icon>arrow_upward</mat-icon>
                     </button>
@@ -135,11 +147,15 @@ const PHASE_HELP: Record<ModelPhase, string> = {
                       mat-icon-button
                       [disabled]="last"
                       (click)="move(e, i, 1)"
-                      aria-label="Move down"
+                      [attr.aria-label]="'Move down' | t"
                     >
                       <mat-icon>arrow_downward</mat-icon>
                     </button>
-                    <button mat-icon-button (click)="removeAt(e, i)" aria-label="Remove">
+                    <button
+                      mat-icon-button
+                      (click)="removeAt(e, i)"
+                      [attr.aria-label]="'Remove' | t"
+                    >
                       <mat-icon>close</mat-icon>
                     </button>
                   }
@@ -147,36 +163,44 @@ const PHASE_HELP: Record<ModelPhase, string> = {
               } @empty {
                 <li class="muted none">
                   {{
-                    projectId() ? 'No override: the global chain applies.' : 'No model selected.'
+                    projectId()
+                      ? ('No override: the global chain applies.' | t)
+                      : ('No model selected.' | t)
                   }}
                 </li>
               }
             </ol>
             @if (canEdit() && (!e.assignment.single_model || e.chain.length === 0)) {
               <mat-form-field appearance="outline" subscriptSizing="dynamic" class="add">
-                <mat-label>{{ e.chain.length ? 'Add fallback model' : 'Select model' }}</mat-label>
+                <mat-label>{{
+                  e.chain.length ? ('Add fallback model' | t) : ('Select model' | t)
+                }}</mat-label>
                 <mat-select (valueChange)="add(e, $event)" [value]="null">
                   @for (m of available(e); track m.id) {
                     <mat-option [value]="m">{{ m.provider_name }} / {{ m.model }}</mat-option>
                   } @empty {
-                    <mat-option disabled
-                      >No enabled model with this capability (Settings → Providers)</mat-option
-                    >
+                    <mat-option disabled>{{
+                      'No enabled model with this capability (Settings → Providers)' | t
+                    }}</mat-option>
                   }
                 </mat-select>
               </mat-form-field>
             }
             @if (e.phase === 'embedding' && e.dirty) {
               <p class="warn-text">
-                <mat-icon>warning</mat-icon> Sources already indexed with another embedding model
-                must be re-indexed.
+                <mat-icon>warning</mat-icon>
+                {{ 'Sources already indexed with another embedding model must be re-indexed.' | t }}
               </p>
             }
           </mat-card-content>
           @if (canEdit()) {
             <mat-card-actions align="end">
-              <button mat-button [disabled]="!e.dirty" (click)="reset()">Discard</button>
-              <button mat-flat-button [disabled]="!e.dirty" (click)="save(e)">Save</button>
+              <button mat-button [disabled]="!e.dirty" (click)="reset()">
+                {{ 'Discard' | t }}
+              </button>
+              <button mat-flat-button [disabled]="!e.dirty" (click)="save(e)">
+                {{ 'Save' | t }}
+              </button>
             </mat-card-actions>
           }
         </mat-card>
@@ -321,10 +345,12 @@ export class ModelsComponent {
         e.chain.map((m) => m.id),
         this.projectId(),
       );
-      this.snack.open(`${PHASE_LABELS[e.phase]} saved`, 'Close', { duration: 3000 });
+      this.snack.open(t('{phase} saved', { phase: t(PHASE_LABELS[e.phase]) }), t('Close'), {
+        duration: 3000,
+      });
       await this.reset();
     } catch (err) {
-      this.snack.open(errorMessage(err), 'Close', { duration: 6000 });
+      this.snack.open(errorMessage(err), t('Close'), { duration: 6000 });
     }
   }
 }

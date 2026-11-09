@@ -18,6 +18,7 @@ cp "$ROOT/scripts/gen-secrets.sh" "$ROOT/scripts/backup.sh" "$ROOT/scripts/resto
 
 images=(
   "$REGISTRY/opennotebook-web:$VERSION" "$REGISTRY/opennotebook-api:$VERSION" "$REGISTRY/opennotebook-worker:$VERSION"
+  "$REGISTRY/opennotebook-converter:$VERSION"
   postgres:18.6-alpine qdrant/qdrant:v1.20.0 chrislusf/seaweedfs:4.52 redis:8.8.4-alpine alpine:3.22
 )
 # shellcheck disable=SC2206

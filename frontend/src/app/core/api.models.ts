@@ -1,3 +1,5 @@
+import { i18nKey } from './i18n';
+
 // Types mirroring the backend API (backend/src/opennotebook/api).
 
 export type NodeKind = 'project' | 'workspace' | 'notebook';
@@ -18,13 +20,13 @@ export type ProviderKind =
 export const BASE_CAPABILITIES: ModelPhase[] = ['chat', 'vision', 'embedding', 'rerank', 'ocr'];
 
 export const PHASE_LABELS: Record<ModelPhase, string> = {
-  chat: 'Chat',
-  summary: 'Summary & suggested questions',
-  graph_extraction: 'Graph extraction',
-  vision: 'Image description',
-  ocr: 'OCR',
-  embedding: 'Embedding',
-  rerank: 'Rerank',
+  chat: i18nKey('Chat'),
+  summary: i18nKey('Summary & suggested questions'),
+  graph_extraction: i18nKey('Graph extraction'),
+  vision: i18nKey('Image description'),
+  ocr: i18nKey('OCR'),
+  embedding: i18nKey('Embedding'),
+  rerank: i18nKey('Rerank'),
 };
 
 export interface User {

@@ -7,6 +7,7 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from fastapi import Response as FastAPIResponse
 from fastapi.responses import Response
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func, select
@@ -21,6 +22,7 @@ from opennotebook.ingestion.search import search_scope
 from opennotebook.ingestion.vectors import get_vector_index
 from opennotebook.ingestion.web import FetchError, normalize_url
 from opennotebook.models import (
+    TERMINAL_STATUSES,
     Chunk,
     GrantRole,
     Source,
@@ -53,6 +55,8 @@ class SourceOut(BaseModel):
     embedding_model_id: uuid.UUID | None
     note_id: uuid.UUID | None
     parent_source_id: uuid.UUID | None = None
+    # members of an archive / pages of a crawl (set by the listing endpoint)
+    child_count: int = 0
     uri: str | None = None
     language: str | None = None
     summary: str | None = None
@@ -75,7 +79,7 @@ class SourceOut(BaseModel):
             meta = value.metadata_ or {}
             details = {
                 k: meta[k]
-                for k in ("archive", "final_url", "content_type", "fetched_at", "crawl")
+                for k in ("archive", "final_url", "content_type", "fetched_at", "crawl", "rendition")
                 if k in meta
             }
             return {
@@ -297,31 +301,97 @@ async def add_web_pages(
     ]
 
 
-@router.get("/sources", response_model=list[SourceOut])
-async def list_sources(
-    user: CurrentUser,
-    session: SessionDep,
-    scope_id: uuid.UUID | None = None,
-    status_filter: SourceStatus | None = Query(default=None, alias="status"),
-    include_notes: bool = True,
-) -> list[Source]:
-    """Sources the user can read (projects, workspaces, notebooks), optionally restricted to a subtree."""
+class SourceCounts(BaseModel):
+    # top-level sources (archive members and crawled pages excluded) directly in each node
+    nodes: dict[uuid.UUID, int]
+    # sources still being processed in the visible tree (drives client polling)
+    processing: int
+
+
+async def _readable_node_ids(session, user, scope_id: uuid.UUID | None) -> list[uuid.UUID]:  # type: ignore[no-untyped-def]
     readable = [n for n, role in await visible_nodes(session, user) if role is not None]
     if scope_id is not None:
         scope, _ = await get_node_for(session, user, scope_id)
         readable = [n for n in readable if n.path == scope.path or n.path.startswith(scope.path + ".")]
-    if not readable:
+    return [n.id for n in readable]
+
+
+@router.get("/sources", response_model=list[SourceOut])
+async def list_sources(
+    user: CurrentUser,
+    session: SessionDep,
+    response: FastAPIResponse,
+    scope_id: uuid.UUID | None = None,
+    node_id: uuid.UUID | None = Query(default=None, description="only sources directly in this node"),
+    parent_id: uuid.UUID | None = Query(default=None, description="only members of this archive or crawl"),
+    top_level: bool = Query(default=False, description="exclude archive members and crawled pages"),
+    q: str | None = Query(default=None, max_length=200, description="title contains (case-insensitive)"),
+    ids: list[uuid.UUID] | None = Query(default=None, max_length=500),
+    status_filter: SourceStatus | None = Query(default=None, alias="status"),
+    include_notes: bool = True,
+    offset: int = Query(default=0, ge=0),
+    limit: int | None = Query(default=None, ge=1, le=1000),
+) -> list[Source]:
+    """Sources the user can read, optionally restricted to a subtree, a node or an archive.
+
+    Paginated with `offset`/`limit`; the total is in the `X-Total-Count` header."""
+    node_ids = await _readable_node_ids(session, user, scope_id)
+    if node_id is not None:
+        node_ids = [n for n in node_ids if n == node_id]
+    if not node_ids:
+        response.headers["X-Total-Count"] = "0"
         return []
-    stmt = (
-        select(Source)
-        .where(Source.notebook_id.in_([n.id for n in readable]), Source.deleted_at.is_(None))
-        .order_by(Source.title)
-    )
+    stmt = select(Source).where(Source.notebook_id.in_(node_ids), Source.deleted_at.is_(None))
+    if parent_id is not None:
+        stmt = stmt.where(Source.parent_source_id == parent_id)
+    elif top_level:
+        stmt = stmt.where(Source.parent_source_id.is_(None))
+    if q:
+        escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        stmt = stmt.where(Source.title.ilike(f"%{escaped}%", escape="\\"))
+    if ids:
+        stmt = stmt.where(Source.id.in_(ids))
     if status_filter is not None:
         stmt = stmt.where(Source.status == status_filter)
     if not include_notes:
         stmt = stmt.where(Source.kind != SourceKind.note)
-    return list((await session.scalars(stmt)).all())
+    total = await session.scalar(select(func.count()).select_from(stmt.subquery()))
+    response.headers["X-Total-Count"] = str(total or 0)
+    stmt = stmt.order_by(Source.title, Source.id).offset(offset)
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    sources = list((await session.scalars(stmt)).all())
+    if sources:
+        rows = await session.execute(
+            select(Source.parent_source_id, func.count())
+            .where(Source.parent_source_id.in_([s.id for s in sources]), Source.deleted_at.is_(None))
+            .group_by(Source.parent_source_id)
+        )
+        counts: dict[uuid.UUID | None, int] = {parent: n for parent, n in rows.all()}
+        for src in sources:
+            src.child_count = counts.get(src.id, 0)  # type: ignore[attr-defined]
+    return sources
+
+
+@router.get("/sources/counts", response_model=SourceCounts)
+async def source_counts(
+    user: CurrentUser, session: SessionDep, scope_id: uuid.UUID | None = None
+) -> SourceCounts:
+    """Per-node counts that let the client build the tree without loading every source."""
+    node_ids = await _readable_node_ids(session, user, scope_id)
+    if not node_ids:
+        return SourceCounts(nodes={}, processing=0)
+    alive = (Source.notebook_id.in_(node_ids), Source.deleted_at.is_(None))
+    rows = await session.execute(
+        select(Source.notebook_id, func.count())
+        .where(*alive, Source.parent_source_id.is_(None))
+        .group_by(Source.notebook_id)
+    )
+    processing = await session.scalar(
+        select(func.count()).where(*alive, Source.status.not_in(list(TERMINAL_STATUSES)))
+    )
+    nodes: dict[uuid.UUID, int] = {node: n for node, n in rows.all()}
+    return SourceCounts(nodes=nodes, processing=processing or 0)
 
 
 @router.get("/sources/{source_id}", response_model=SourceOut)
@@ -406,6 +476,25 @@ async def download_original(source_id: uuid.UUID, user: CurrentUser, session: Se
             "Content-Disposition": f'attachment; filename="{safe_name}"',
             "Cache-Control": "private, no-store",
         },
+    )
+
+
+@router.get("/sources/{source_id}/view")
+async def view_file(source_id: uuid.UUID, user: CurrentUser, session: SessionDep) -> Response:
+    """What the viewer renders: the PDF rendition of a converted office document, otherwise the original."""
+    source = await _source_for(session, user, source_id, GrantRole.viewer)
+    blob = None
+    if (source.metadata_ or {}).get("rendition") == "pdf":
+        blob = await session.get(SourceBlob, (source.id, "pdf"))
+    if blob is None:
+        blob = await session.get(SourceBlob, (source.id, "original"))
+    if blob is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "File not available")
+    data = await get_blob_store().get(blob.object_key)
+    return Response(
+        data,
+        media_type=blob.content_type,
+        headers={"Content-Disposition": "inline", "Cache-Control": "private, no-store"},
     )
 
 

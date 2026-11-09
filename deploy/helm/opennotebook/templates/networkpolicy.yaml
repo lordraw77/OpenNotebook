@@ -1,0 +1,66 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $fn := include "on.fullname" . }}
+{{- $appPods := list "api" "worker" "migrate" }}
+{{- /* data services: reachable from the application pods only */}}
+{{- range $svc, $port := dict "postgres" 5432 "qdrant" 6333 "seaweedfs" 8333 "redis" 6379 }}
+{{- if index $.Values (ternary "postgresql" $svc (eq $svc "postgres")) "enabled" }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fn }}-{{ $svc }}
+  labels: {{- include "on.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "on.selector" (list $ $svc) | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- range $appPods }}
+        - podSelector:
+            matchLabels: {{- include "on.selector" (list $ .) | nindent 14 }}
+        {{- end }}
+      ports: [{ port: {{ $port }} }]
+---
+{{- end }}
+{{- end }}
+{{- if .Values.converter.enabled }}
+{{- /* converter: only the worker may connect, and it may connect to nothing (no egress, not even DNS) */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fn }}-converter
+  labels: {{- include "on.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "on.selector" (list . "converter") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {{- include "on.selector" (list . "worker") | nindent 14 }}
+      ports: [{ port: 8080 }]
+  egress: []
+---
+{{- end }}
+{{- with .Values.networkPolicy.metricsFrom }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fn }}-metrics
+  labels: {{- include "on.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/component, operator: In, values: [api, worker] }
+      - { key: app.kubernetes.io/instance, operator: In, values: [{{ $.Release.Name }}] }
+  policyTypes: [Ingress]
+  ingress:
+    # the web pods proxy /api to the api: selecting the api pods here must not cut that traffic
+    - from:
+        - podSelector:
+            matchLabels: {{- include "on.selector" (list $ "web") | nindent 14 }}
+      ports: [{ port: 8000 }]
+    - from: {{- toYaml . | nindent 8 }}
+      ports: [{ port: 8000 }, { port: 9101 }]
+{{- end }}
+{{- end }}

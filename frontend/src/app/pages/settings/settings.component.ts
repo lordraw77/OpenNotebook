@@ -3,21 +3,22 @@ import { MatTabsModule } from '@angular/material/tabs';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 
 import { AuthService } from '../../core/auth.service';
+import { TranslatePipe, t } from '../../core/i18n';
 
 @Component({
   selector: 'app-settings',
-  imports: [MatTabsModule, RouterLink, RouterLinkActive, RouterOutlet],
+  imports: [TranslatePipe, MatTabsModule, RouterLink, RouterLinkActive, RouterOutlet],
   template: `
     <div class="page">
-      <h1>Settings</h1>
-      <nav mat-tab-nav-bar [tabPanel]="panel" aria-label="Settings sections">
+      <h1>{{ 'Settings' | t }}</h1>
+      <nav mat-tab-nav-bar [tabPanel]="panel" [attr.aria-label]="'Settings sections' | t">
         <a
           mat-tab-link
           routerLink="models"
           routerLinkActive
           #m="routerLinkActive"
           [active]="m.isActive"
-          >Models</a
+          >{{ 'Models' | t }}</a
         >
         @if (auth.isAdmin()) {
           <a
@@ -26,7 +27,7 @@ import { AuthService } from '../../core/auth.service';
             routerLinkActive
             #p="routerLinkActive"
             [active]="p.isActive"
-            >Providers</a
+            >{{ 'Providers' | t }}</a
           >
           <a
             mat-tab-link
@@ -34,7 +35,7 @@ import { AuthService } from '../../core/auth.service';
             routerLinkActive
             #u="routerLinkActive"
             [active]="u.isActive"
-            >Users</a
+            >{{ 'Users' | t }}</a
           >
           <a
             mat-tab-link
@@ -42,7 +43,7 @@ import { AuthService } from '../../core/auth.service';
             routerLinkActive
             #g="routerLinkActive"
             [active]="g.isActive"
-            >Groups</a
+            >{{ 'Groups' | t }}</a
           >
         }
       </nav>

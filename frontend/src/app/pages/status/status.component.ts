@@ -9,11 +9,13 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 
 import { ComponentStatus, TreeNodeDto } from '../../core/api.models';
 import { ApiService, errorMessage } from '../../core/api.service';
-import { IngestionStatus, SourcesApi } from '../../core/sources.api';
+import { IngestionStatus, SourcesApi, statusLabel } from '../../core/sources.api';
+import { TranslatePipe, t } from '../../core/i18n';
 
 @Component({
   selector: 'app-status',
   imports: [
+    TranslatePipe,
     MatCardModule,
     MatIconModule,
     MatButtonModule,
@@ -25,16 +27,18 @@ import { IngestionStatus, SourcesApi } from '../../core/sources.api';
   template: `
     <div class="page">
       <div class="row">
-        <h1>RAG Status</h1>
+        <h1>{{ 'RAG Status' | t }}</h1>
         <span class="spacer"></span>
-        <span class="muted">Version {{ version() }}</span>
-        <button mat-stroked-button (click)="load()"><mat-icon>refresh</mat-icon> Refresh</button>
+        <span class="muted">{{ 'Version {v}' | t: { v: version() } }}</span>
+        <button mat-stroked-button (click)="load()">
+          <mat-icon>refresh</mat-icon> {{ 'Refresh' | t }}
+        </button>
       </div>
       @if (error()) {
         <p class="error-text">{{ error() }}</p>
       }
 
-      <h2 class="section">Services</h2>
+      <h2 class="section">{{ 'Services' | t }}</h2>
       <div class="grid">
         @for (c of components(); track c.name) {
           <mat-card appearance="outlined" class="svc" [class.down]="!c.ok">
@@ -48,7 +52,7 @@ import { IngestionStatus, SourcesApi } from '../../core/sources.api';
       </div>
 
       @if (ingestion(); as ing) {
-        <h2 class="section">Sources by status</h2>
+        <h2 class="section">{{ 'Sources by status' | t }}</h2>
         <div class="grid">
           @for (s of statuses; track s) {
             <mat-card
@@ -58,59 +62,62 @@ import { IngestionStatus, SourcesApi } from '../../core/sources.api';
             >
               <div>
                 <div class="count">{{ ing.by_status[s] }}</div>
-                <div class="muted name">{{ s }}</div>
+                <div class="muted name">{{ statusLabel(s) }}</div>
               </div>
             </mat-card>
           }
         </div>
         <p class="muted">
-          Queues:
+          {{ 'Queues:' | t }}
           @if (ing.queues) {
             @for (q of queueNames(ing); track q) {
               {{ q }} {{ ing.queues[q] }}{{ $last ? '' : ' · ' }}
             }
           } @else {
-            unavailable
+            {{ 'unavailable' | t }}
           }
         </p>
 
-        <h2 class="section">Index by project</h2>
+        <h2 class="section">{{ 'Index by project' | t }}</h2>
         <div class="table-wrap">
           <table mat-table [dataSource]="ing.projects">
             <ng-container matColumnDef="project">
-              <th mat-header-cell *matHeaderCellDef>Project</th>
+              <th mat-header-cell *matHeaderCellDef>{{ 'Project' | t }}</th>
               <td mat-cell *matCellDef="let p">{{ p.project_name }}</td>
             </ng-container>
             <ng-container matColumnDef="model">
-              <th mat-header-cell *matHeaderCellDef>Embedding model</th>
+              <th mat-header-cell *matHeaderCellDef>{{ 'Embedding model' | t }}</th>
               <td mat-cell *matCellDef="let p">
                 {{ p.embedding_model ?? 'not configured' }}
                 @if (p.embedding_source === 'project') {
-                  <span class="cap">project override</span>
+                  <span class="cap">{{ 'project override' | t }}</span>
                 }
                 @if (p.switch_pending) {
                   <div class="muted small-note">
-                    <mat-icon inline>sync</mat-icon> searches still served by
-                    <strong>{{ p.serving_model }}</strong> until every source is re-indexed
+                    <mat-icon inline>sync</mat-icon> {{ 'searches still served by' | t }}
+                    <strong>{{ p.serving_model }}</strong>
+                    {{ 'until every source is re-indexed' | t }}
                   </div>
                 }
               </td>
             </ng-container>
             <ng-container matColumnDef="sources">
-              <th mat-header-cell *matHeaderCellDef>Sources</th>
+              <th mat-header-cell *matHeaderCellDef>{{ 'Sources' | t }}</th>
               <td mat-cell *matCellDef="let p">{{ p.sources }}</td>
             </ng-container>
             <ng-container matColumnDef="chunks">
-              <th mat-header-cell *matHeaderCellDef>Chunks</th>
+              <th mat-header-cell *matHeaderCellDef>{{ 'Chunks' | t }}</th>
               <td mat-cell *matCellDef="let p">{{ p.chunks | number }}</td>
             </ng-container>
             <ng-container matColumnDef="stale">
-              <th mat-header-cell *matHeaderCellDef>Needs re-index</th>
+              <th mat-header-cell *matHeaderCellDef>{{ 'Needs re-index' | t }}</th>
               <td mat-cell *matCellDef="let p">
                 @if (p.stale_sources) {
                   <span
                     class="error-text"
-                    matTooltip="Indexed with a different embedding model than the current one"
+                    [matTooltip]="
+                      'Indexed with a different embedding model than the current one' | t
+                    "
                     >{{ p.stale_sources }}</span
                   >
                 } @else {
@@ -127,14 +134,14 @@ import { IngestionStatus, SourcesApi } from '../../core/sources.api';
                     (click)="reindexProject(p.project_id, p.project_name)"
                     [disabled]="!p.sources"
                   >
-                    <mat-icon>refresh</mat-icon> Re-index
+                    <mat-icon>refresh</mat-icon> {{ 'Re-index' | t }}
                   </button>
                   <button
                     mat-button
                     (click)="rebuildGraph(p.project_id, p.project_name)"
                     [disabled]="!p.sources"
                   >
-                    <mat-icon>hub</mat-icon> Rebuild graph
+                    <mat-icon>hub</mat-icon> {{ 'Rebuild graph' | t }}
                   </button>
                 }
               </td>
@@ -142,13 +149,15 @@ import { IngestionStatus, SourcesApi } from '../../core/sources.api';
             <tr mat-header-row *matHeaderRowDef="projectColumns"></tr>
             <tr mat-row *matRowDef="let p; columns: projectColumns"></tr>
             <tr class="mat-row" *matNoDataRow>
-              <td class="mat-cell muted" [attr.colspan]="projectColumns.length">No projects.</td>
+              <td class="mat-cell muted" [attr.colspan]="projectColumns.length">
+                {{ 'No projects.' | t }}
+              </td>
             </tr>
           </table>
         </div>
 
         @if (ing.failed.length) {
-          <h2 class="section">Failed sources</h2>
+          <h2 class="section">{{ 'Failed sources' | t }}</h2>
           <ul class="list">
             @for (f of ing.failed; track f.id) {
               <li>
@@ -156,37 +165,40 @@ import { IngestionStatus, SourcesApi } from '../../core/sources.api';
                 <strong>{{ f.title }}</strong>
                 <span class="error-text">{{ f.error?.message }}</span>
                 <span class="spacer"></span>
-                <button mat-button (click)="retry(f.id)">Retry</button>
+                <button mat-button (click)="retry(f.id)">{{ 'Retry' | t }}</button>
               </li>
             }
           </ul>
         }
 
-        <h2 class="section">Recent jobs</h2>
+        <h2 class="section">{{ 'Recent jobs' | t }}</h2>
         <div class="table-wrap">
           <table mat-table [dataSource]="ing.recent_jobs">
             <ng-container matColumnDef="when">
-              <th mat-header-cell *matHeaderCellDef>Started</th>
+              <th mat-header-cell *matHeaderCellDef>{{ 'Started' | t }}</th>
               <td mat-cell *matCellDef="let j">{{ j.created_at | date: 'short' }}</td>
             </ng-container>
             <ng-container matColumnDef="reason">
-              <th mat-header-cell *matHeaderCellDef>Reason</th>
+              <th mat-header-cell *matHeaderCellDef>{{ 'Reason' | t }}</th>
               <td mat-cell *matCellDef="let j">{{ j.reason }}</td>
             </ng-container>
             <ng-container matColumnDef="status">
-              <th mat-header-cell *matHeaderCellDef>Result</th>
+              <th mat-header-cell *matHeaderCellDef>{{ 'Result' | t }}</th>
               <td mat-cell *matCellDef="let j" [matTooltip]="j.error ?? ''">
-                {{ j.status }}{{ j.attempts > 1 ? ' (attempt ' + j.attempts + ')' : '' }}
+                {{ statusLabel(j.status)
+                }}{{ j.attempts > 1 ? ' ' + ('(attempt {n})' | t: { n: j.attempts }) : '' }}
               </td>
             </ng-container>
             <ng-container matColumnDef="model">
-              <th mat-header-cell *matHeaderCellDef>Embedding model</th>
+              <th mat-header-cell *matHeaderCellDef>{{ 'Embedding model' | t }}</th>
               <td mat-cell *matCellDef="let j">{{ j.provider_model ?? '—' }}</td>
             </ng-container>
             <tr mat-header-row *matHeaderRowDef="jobColumns"></tr>
             <tr mat-row *matRowDef="let j; columns: jobColumns"></tr>
             <tr class="mat-row" *matNoDataRow>
-              <td class="mat-cell muted" [attr.colspan]="jobColumns.length">No jobs yet.</td>
+              <td class="mat-cell muted" [attr.colspan]="jobColumns.length">
+                {{ 'No jobs yet.' | t }}
+              </td>
             </tr>
           </table>
         </div>
@@ -254,6 +266,7 @@ import { IngestionStatus, SourcesApi } from '../../core/sources.api';
   `,
 })
 export class StatusComponent {
+  protected readonly statusLabel = statusLabel;
   private readonly api = inject(ApiService);
   private readonly sourcesApi = inject(SourcesApi);
   private readonly snack = inject(MatSnackBar);
@@ -305,33 +318,38 @@ export class StatusComponent {
   async reindexProject(id: string, name: string): Promise<void> {
     if (
       !confirm(
-        `Re-index every source of “${name}”? This calls the embedding provider for all chunks.`,
+        t('Re-index every source of “{name}”? This calls the embedding provider for all chunks.', {
+          name,
+        }),
       )
     )
       return;
     try {
       const r = await this.sourcesApi.reindexProject(id);
-      this.snack.open(`${r.queued} sources queued`, 'Close', { duration: 3000 });
+      this.snack.open(t('{n} sources queued', { n: r.queued }), t('Close'), { duration: 3000 });
       await this.loadIngestion();
     } catch (err) {
-      this.snack.open(errorMessage(err), 'Close', { duration: 5000 });
+      this.snack.open(errorMessage(err), t('Close'), { duration: 5000 });
     }
   }
 
   async rebuildGraph(id: string, name: string): Promise<void> {
     if (
       !confirm(
-        `Re-extract the knowledge graph of “${name}”? Documents are sent again to the graph extraction model (code needs no model).`,
+        t(
+          'Re-extract the knowledge graph of “{name}”? Documents are sent again to the graph extraction model (code needs no model).',
+          { name },
+        ),
       )
     )
       return;
     try {
       const r = await this.sourcesApi.rebuildProjectGraph(id);
-      this.snack.open(`${r.queued} sources queued for graph extraction`, 'Close', {
+      this.snack.open(t('{n} sources queued for graph extraction', { n: r.queued }), t('Close'), {
         duration: 3000,
       });
     } catch (err) {
-      this.snack.open(errorMessage(err), 'Close', { duration: 5000 });
+      this.snack.open(errorMessage(err), t('Close'), { duration: 5000 });
     }
   }
 
@@ -340,7 +358,7 @@ export class StatusComponent {
       await this.sourcesApi.reindex(sourceId);
       await this.loadIngestion();
     } catch (err) {
-      this.snack.open(errorMessage(err), 'Close', { duration: 5000 });
+      this.snack.open(errorMessage(err), t('Close'), { duration: 5000 });
     }
   }
 }

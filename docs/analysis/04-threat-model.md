@@ -46,7 +46,13 @@ Every model call crosses boundary 4 or 5: no model runs inside the stack (ADR-00
   bomb, path traversal, symlinks (ZIP and TAR), file count.
 - **T5 (parsers)**: the worker runs non-root with a read-only root filesystem and no capabilities; images are
   bounded by `IMAGE_MAX_PIXELS` (decompression bombs). The worker keeps egress because it calls the providers and
-  fetches web pages; a separate network-less parsing worker is planned for M6.
+  fetches web pages. The riskiest parser, LibreOffice (office formats other than DOCX), never runs in the worker:
+  it runs in the optional `converter` container, alone on the `convert` network (`internal: true`), reachable
+  only by the worker, with no internet, database or object-storage access, non-root, read-only root FS, no
+  capabilities, memory/PID limits and a per-conversion timeout that kills the process group; macros never run.
+  A compromised converter can only return a malicious PDF, which pdfplumber then parses under the worker's limits.
+  Residual: the deterministic parsers (pdfplumber, python-docx, Pillow, tree-sitter) still run inside the worker,
+  which has egress; moving them to a network-less parsing worker remains possible future work.
 - **T6 (SSRF)**: implemented in `ingestion/web.py`: http(s) only, no credentials, all resolved addresses must be
   public (loopback, private, link-local incl. `169.254.169.254`, multicast, reserved, IPv4-mapped refused), the
   connected peer is re-checked (DNS rebinding), redirects re-validated hop by hop, size/time limits, no environment
@@ -79,8 +85,8 @@ Every model call crosses boundary 4 or 5: no model runs inside the stack (ADR-00
 
 - **T14**: per-user rate limits on chat, deep research and search (Redis, fail-open if Redis is down).
 - **T15**: dependency audit (`pip-audit`, `npm audit`), image scanning (Trivy) and SBOM in CI; OS security
-  updates applied at image build. Accepted exceptions are listed with reasons in
-  [../operations/security.md](../operations/security.md).
+  updates applied at image build; no accepted exceptions at the moment
+  ([../operations/security.md](../operations/security.md)).
 - **T8**: `APP_ENCRYPTION_KEY` rotation (`rotate-encryption-key`, all or nothing, previous key accepted during
   the change).
 - **T5 / D (denial of service)**: memory and PID limits per container.

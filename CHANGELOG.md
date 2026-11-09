@@ -2,7 +2,28 @@
 
 All notable changes. Images: `lordraw/opennotebook-{web,api,worker}` on Docker Hub.
 
-## Unreleased (M6 — production readiness)
+## 1.0.0 — 2026-11-09
+
+Includes the M6 work below.
+
+- Security: `filelock` 4.2.1 (13 CVEs fixed) through a uv override, while LiteLLM 1.108.0 still declares `<4`.
+- Helm chart `deploy/helm/opennotebook` (NFR-08): application, migration Job, optional converter, bundled or external
+  data services, Ingress, NetworkPolicies; new `opennotebook wait-migrations` command for init containers.
+- RAG evaluation: second set `eval/graph` (24 documents, 16 questions, chains project -> lead -> system ->
+  data centre) and context coverage via search versus graph (`scripts/rag_eval.py --set graph`); graph
+  expansion now weighs seeds by the rank of their passage.
+- Italian user interface (NFR-06): language switch in the top bar (browser language by default), Italian dates
+  and numbers, translated server messages for the common cases; `scripts/check-i18n.mjs` in CI.
+- Workbench: lazy source tree. Sources load per expanded node or archive, 100 per page with "Load more";
+  `GET /api/sources` gains `node_id`, `parent_id`, `top_level`, `q`, `ids`, `offset`/`limit` (`X-Total-Count`) and
+  `child_count`; new `GET /api/sources/counts`.
+- Office documents: optional isolated `converter` service (headless LibreOffice, image
+  `opennotebook-converter`, `converter` profile, `CONVERTER_URL`). PPTX, XLSX, ODT/ODP/ODS, DOC/XLS/PPT, RTF and
+  DOCX become PDF renditions with page anchors and the PDF viewer (`GET /api/sources/{id}/view`). The converter
+  runs alone on an internal `convert` network reachable only by the worker (threat T5).
+- Tracing: database spans (operation and table only, no SQL text or parameters) from SQLAlchemy cursor events.
+
+## M6 — production readiness (committed 2026-11-09)
 
 - Observability:
   - application metrics for HTTP, chat time to first token, retrieval, provider calls, ingestion, background
@@ -23,7 +44,7 @@ All notable changes. Images: `lordraw/opennotebook-{web,api,worker}` on Docker H
   - per-user rate limits on chat, deep research and search;
   - memory and PID limits per container;
   - OS security updates applied in the images;
-  - `pip-audit`, `npm audit`, Trivy image scans and SPDX SBOM in CI (accepted exceptions documented).
+  - `pip-audit`, `npm audit`, Trivy image scans and SPDX SBOM in CI.
 - Release bundle: includes the deployment Compose file and the backup/restore scripts; `install.sh --yes`
   starts with `--pull never`. Verified on a host without the images.
 - Fix: nginx re-resolves the api address, so recreating the api no longer causes 502 errors until the web

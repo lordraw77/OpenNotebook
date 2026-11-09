@@ -4,11 +4,12 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 
 import { Citation, citationLocation } from '../../core/sources.api';
 import { Inline, parseAnswer } from './answer-render';
+import { TranslatePipe } from '../../core/i18n';
 
 /** Renders an answer (or a note saved from the chat) with clickable citation chips. */
 @Component({
   selector: 'app-answer-view',
-  imports: [NgTemplateOutlet, MatTooltipModule],
+  imports: [TranslatePipe, NgTemplateOutlet, MatTooltipModule],
   template: `
     @for (b of blocks(); track $index) {
       @switch (b.kind) {
@@ -66,7 +67,7 @@ import { Inline, parseAnswer } from './answer-render';
                 type="button"
                 class="cite"
                 [matTooltip]="tooltip(c)"
-                [attr.aria-label]="'Open source ' + s.n + ': ' + tooltip(c)"
+                [attr.aria-label]="'Open source {n}: {title}' | t: { n: s.n, title: tooltip(c) }"
                 (click)="cite.emit(c)"
                 [textContent]="s.n"
               ></button>

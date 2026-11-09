@@ -7,13 +7,28 @@ import { MatSnackBar } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 
 import { errorMessage } from '../../core/api.service';
-import { ChunkDto, SourceDto, SourcesApi, TERMINAL, formatBytes } from '../../core/sources.api';
+import {
+  ChunkDto,
+  SourceDto,
+  SourcesApi,
+  TERMINAL,
+  formatBytes,
+  statusLabel,
+} from '../../core/sources.api';
+import { TranslatePipe, t } from '../../core/i18n';
 
 const PAGE = 50;
 
 @Component({
   selector: 'app-source-detail',
-  imports: [DatePipe, MatButtonModule, MatIconModule, MatProgressBarModule, MatTooltipModule],
+  imports: [
+    TranslatePipe,
+    DatePipe,
+    MatButtonModule,
+    MatIconModule,
+    MatProgressBarModule,
+    MatTooltipModule,
+  ],
   template: `
     @if (source(); as s) {
       <div class="detail">
@@ -21,23 +36,30 @@ const PAGE = 50;
           <div>
             <h3>{{ s.title }}</h3>
             <div class="muted">
-              {{ s.mime_type }} · {{ size(s.size_bytes) }}
+              {{ s.mime_type
+              }}{{ s.details.rendition === 'pdf' ? ' ' + ('(shown as PDF)' | t) : '' }} ·
+              {{ size(s.size_bytes) }}
               @if (s.page_count) {
-                · {{ s.page_count }} pages
+                · {{ '{n} pages' | t: { n: s.page_count } }}
               }
-              · {{ s.chunk_count }} {{ s.chunk_count === 1 ? 'chunk' : 'chunks' }}
+              ·
+              {{
+                s.chunk_count === 1
+                  ? ('{n} chunk' | t: { n: 1 })
+                  : ('{n} chunks' | t: { n: s.chunk_count })
+              }}
               @if (s.indexed_at) {
-                · indexed {{ s.indexed_at | date: 'short' }}
+                · {{ 'indexed {date}' | t: { date: s.indexed_at | date: 'short' } }}
               }
             </div>
           </div>
           <span class="spacer"></span>
-          <span class="status" [class]="s.status">{{ s.status }}</span>
+          <span class="status" [class]="s.status">{{ statusLabel(s.status) }}</span>
           @if (s.kind !== 'note') {
             <button
               mat-icon-button
-              matTooltip="Download original"
-              aria-label="Download original"
+              [matTooltip]="'Download original' | t"
+              [attr.aria-label]="'Download original' | t"
               (click)="download(s)"
             >
               <mat-icon>download</mat-icon>
@@ -46,8 +68,8 @@ const PAGE = 50;
           @if (canEdit()) {
             <button
               mat-icon-button
-              matTooltip="Re-index"
-              aria-label="Re-index"
+              [matTooltip]="'Re-index' | t"
+              [attr.aria-label]="'Re-index' | t"
               [disabled]="!terminal(s)"
               (click)="reindex(s)"
             >
@@ -56,15 +78,20 @@ const PAGE = 50;
             @if (s.kind !== 'note') {
               <button
                 mat-icon-button
-                matTooltip="Delete"
-                aria-label="Delete source"
+                [matTooltip]="'Delete' | t"
+                [attr.aria-label]="'Delete source' | t"
                 (click)="remove(s)"
               >
                 <mat-icon>delete</mat-icon>
               </button>
             }
           }
-          <button mat-icon-button matTooltip="Close" aria-label="Close" (click)="closed.emit()">
+          <button
+            mat-icon-button
+            [matTooltip]="'Close' | t"
+            [attr.aria-label]="'Close' | t"
+            (click)="closed.emit()"
+          >
             <mat-icon>close</mat-icon>
           </button>
         </header>
@@ -75,7 +102,7 @@ const PAGE = 50;
           <p class="error-text">
             <mat-icon inline>error</mat-icon> {{ s.error.message }}
             @if (s.error.code === 'provider_error' && !s.error.final && !terminal(s)) {
-              <span class="muted">(retrying automatically)</span>
+              <span class="muted">{{ '(retrying automatically)' | t }}</span>
             }
           </p>
         }
@@ -90,11 +117,15 @@ const PAGE = 50;
                 s.details.final_url ?? s.uri
               }}</a>
               @if (s.details.fetched_at) {
-                <span class="muted">· fetched {{ s.details.fetched_at | date: 'short' }}</span>
+                <span class="muted"
+                  >·
+                  {{ 'fetched {date}' | t: { date: s.details.fetched_at | date: 'short' } }}</span
+                >
               }
               @if (s.details.crawl?.links_followed) {
                 <span class="muted"
-                  >· {{ s.details.crawl?.links_followed }} linked pages added</span
+                  >·
+                  {{ '{n} linked pages added' | t: { n: s.details.crawl?.links_followed } }}</span
                 >
               }
             </p>
@@ -105,7 +136,7 @@ const PAGE = 50;
           @switch (s.summary_status) {
             @case ('done') {
               <section class="summary">
-                <h4><mat-icon inline>auto_awesome</mat-icon> Summary</h4>
+                <h4><mat-icon inline>auto_awesome</mat-icon> {{ 'Summary' | t }}</h4>
                 <p>{{ s.summary }}</p>
                 @if (s.suggested_questions.length) {
                   <div class="questions">
@@ -113,7 +144,7 @@ const PAGE = 50;
                       <button
                         type="button"
                         class="question"
-                        matTooltip="Ask in the chat"
+                        [matTooltip]="'Ask in the chat' | t"
                         (click)="ask.emit(q)"
                       >
                         <mat-icon inline>chat_bubble</mat-icon> {{ q }}
@@ -125,26 +156,32 @@ const PAGE = 50;
             }
             @case ('pending') {
               <p class="muted meta-line">
-                <mat-icon inline>hourglass_top</mat-icon> Summary being generated…
+                <mat-icon inline>hourglass_top</mat-icon> {{ 'Summary being generated…' | t }}
               </p>
             }
             @case ('failed') {
               <p class="muted meta-line">
-                <mat-icon inline>info</mat-icon> No summary: {{ s.summary_error }}
+                <mat-icon inline>info</mat-icon>
+                {{ 'No summary: {error}' | t: { error: s.summary_error } }}
               </p>
             }
           }
           @if (s.details.archive; as a) {
             <section class="summary">
-              <h4><mat-icon inline>folder_zip</mat-icon> Archive</h4>
+              <h4><mat-icon inline>folder_zip</mat-icon> {{ 'Archive' | t }}</h4>
               <p>
-                {{ a.files }} {{ a.files === 1 ? 'file' : 'files' }} indexed as sources ·
-                {{ a.skipped_count }} skipped · {{ size(a.uncompressed_bytes) }} uncompressed ·
+                {{
+                  a.files === 1
+                    ? ('1 file indexed as a source' | t)
+                    : ('{n} files indexed as sources' | t: { n: a.files })
+                }}
+                · {{ '{n} skipped' | t: { n: a.skipped_count } }} ·
+                {{ '{size} uncompressed' | t: { size: size(a.uncompressed_bytes) } }} ·
                 {{ a.format.toUpperCase() }}
               </p>
               @if (a.skipped.length) {
                 <details>
-                  <summary>Skipped files</summary>
+                  <summary>{{ 'Skipped files' | t }}</summary>
                   <ul class="skipped">
                     @for (k of a.skipped; track k.path + $index) {
                       <li>
@@ -163,22 +200,22 @@ const PAGE = 50;
                 @if (c.page_start) {
                   · p. {{ c.page_start }}{{ c.page_end !== c.page_start ? '–' + c.page_end : '' }}
                 } @else if (c.line_start) {
-                  · lines {{ c.line_start }}–{{ c.line_end }}
+                  · {{ 'lines {start}–{end}' | t: { start: c.line_start, end: c.line_end } }}
                 }
                 @if (c.heading_path.length) {
                   · {{ c.heading_path.join(' › ') }}
                 }
-                · {{ c.token_count }} tokens
+                · {{ '{n} tokens' | t: { n: c.token_count } }}
               </header>
               <p>{{ c.text }}</p>
             </article>
           } @empty {
             @if (terminal(s)) {
-              <p class="muted">No chunks.</p>
+              <p class="muted">{{ 'No chunks.' | t }}</p>
             }
           }
           @if (more()) {
-            <button mat-stroked-button (click)="loadMore(s)">Load more</button>
+            <button mat-stroked-button (click)="loadMore(s)">{{ 'Load more' | t }}</button>
           }
         </div>
       </div>
@@ -303,6 +340,7 @@ const PAGE = 50;
   `,
 })
 export class SourceDetailComponent {
+  protected readonly statusLabel = statusLabel;
   private readonly api = inject(SourcesApi);
   private readonly snack = inject(MatSnackBar);
 
@@ -348,18 +386,21 @@ export class SourceDetailComponent {
   }
 
   async remove(s: SourceDto): Promise<void> {
-    if (!confirm(`Delete “${s.title}”? Its chunks and vectors are removed too.`)) return;
-    await this.act(() => this.api.remove(s.id), 'Source deleted');
+    if (
+      !confirm(t('Delete “{title}”? Its chunks and vectors are removed too.', { title: s.title }))
+    )
+      return;
+    await this.act(() => this.api.remove(s.id), t('Source deleted'));
     this.closed.emit();
   }
 
   private async act(fn: () => Promise<unknown>, ok?: string): Promise<void> {
     try {
       await fn();
-      if (ok) this.snack.open(ok, 'Close', { duration: 3000 });
+      if (ok) this.snack.open(ok, t('Close'), { duration: 3000 });
       this.changed.emit();
     } catch (err) {
-      this.snack.open(errorMessage(err), 'Close', { duration: 5000 });
+      this.snack.open(errorMessage(err), t('Close'), { duration: 5000 });
     }
   }
 }

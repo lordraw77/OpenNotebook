@@ -343,6 +343,11 @@ class Source(TimestampMixin, Base):
     graph_model: Mapped[str | None] = mapped_column(String(400))
     graph_error: Mapped[str | None] = mapped_column(Text)
 
+    @property
+    def view_mime_type(self) -> str | None:
+        """What the viewer shows: the PDF rendition of a converted office document, else the original."""
+        return "application/pdf" if (self.metadata_ or {}).get("rendition") == "pdf" else self.mime_type
+
 
 class SourceBlob(Base):
     __tablename__ = "source_blobs"

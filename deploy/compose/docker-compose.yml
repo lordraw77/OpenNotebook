@@ -83,11 +83,37 @@ services:
       args:
         VERSION: ${VERSION:-dev}
     command: ["worker"]
+    networks: [internal, egress, convert]
     depends_on:
       migrate:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+
+  # Office documents to PDF (headless LibreOffice), `converter` profile; set CONVERTER_URL=http://converter:8080.
+  # Threat T5: LibreOffice parses untrusted files, so it runs alone on the `convert` network (internal: no
+  # internet, no database, no storage), reachable only by the worker.
+  converter:
+    profiles: [converter]
+    image: ${REGISTRY:-lordraw}/opennotebook-converter:${VERSION:-dev}
+    build:
+      context: ../../converter
+      args:
+        VERSION: ${VERSION:-dev}
+    environment:
+      CONVERTER_CONCURRENCY: ${CONVERTER_CONCURRENCY:-2}
+      CONVERTER_TIMEOUT_SECONDS: ${CONVERTER_TIMEOUT_SECONDS:-180}
+      CONVERTER_MAX_MB: ${UPLOAD_MAX_MB:-500}
+    mem_limit: ${CONVERTER_MEM_LIMIT:-2g}
+    pids_limit: 256
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    networks: [convert]
 
   migrate:
     <<: *app
@@ -245,6 +271,8 @@ networks:
     internal: true   # no internet access for databases and storage
   egress: {}         # api/worker reach external model providers
   public: {}         # published ports
+  convert:
+    internal: true # worker <-> converter only
 
 volumes:
   pg-data:

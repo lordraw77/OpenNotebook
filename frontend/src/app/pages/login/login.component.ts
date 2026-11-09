@@ -10,10 +10,12 @@ import { Router } from '@angular/router';
 import { errorMessage } from '../../core/api.service';
 import { AdminApi, AuthConfig } from '../../core/admin.api';
 import { AuthService } from '../../core/auth.service';
+import { TranslatePipe, t } from '../../core/i18n';
 
 @Component({
   selector: 'app-login',
   imports: [
+    TranslatePipe,
     FormsModule,
     MatCardModule,
     MatFormFieldModule,
@@ -29,7 +31,7 @@ import { AuthService } from '../../core/auth.service';
             ><span class="logo"><mat-icon>auto_stories</mat-icon></span>
             <span class="gradient-text">OpenNotebook</span></mat-card-title
           >
-          <mat-card-subtitle>Sign in to continue</mat-card-subtitle>
+          <mat-card-subtitle>{{ 'Sign in to continue' | t }}</mat-card-subtitle>
         </mat-card-header>
         <mat-card-content>
           @if (error()) {
@@ -40,13 +42,15 @@ import { AuthService } from '../../core/auth.service';
               <mat-icon>key</mat-icon> {{ config()!.oidc_label }}
             </a>
             @if (config()!.password) {
-              <div class="or"><span>or</span></div>
+              <div class="or">
+                <span>{{ 'or' | t }}</span>
+              </div>
             }
           }
           @if (config() === null || config()!.password) {
             <form (ngSubmit)="submit()" class="form">
               <mat-form-field appearance="outline">
-                <mat-label>Email</mat-label>
+                <mat-label>{{ 'Email' | t }}</mat-label>
                 <input
                   matInput
                   type="email"
@@ -57,7 +61,7 @@ import { AuthService } from '../../core/auth.service';
                 />
               </mat-form-field>
               <mat-form-field appearance="outline">
-                <mat-label>Password</mat-label>
+                <mat-label>{{ 'Password' | t }}</mat-label>
                 <input
                   matInput
                   type="password"
@@ -68,7 +72,7 @@ import { AuthService } from '../../core/auth.service';
                 />
               </mat-form-field>
               <button mat-flat-button type="submit" [disabled]="busy() || !email || !password">
-                Sign in
+                {{ 'Sign in' | t }}
               </button>
             </form>
           }

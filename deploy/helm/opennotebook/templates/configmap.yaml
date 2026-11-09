@@ -1,0 +1,44 @@
+{{- $pg := .Values.external.postgresql -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "on.fullname" . }}-config
+  labels: {{- include "on.labels" . | nindent 4 }}
+data:
+  {{- range $key, $value := .Values.config }}
+  {{ $key }}: {{ $value | toString | quote }}
+  {{- end }}
+  {{- if .Values.postgresql.enabled }}
+  POSTGRES_HOST: {{ include "on.host" (list . "postgres") }}
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: {{ .Values.postgresql.database | quote }}
+  POSTGRES_USER: {{ .Values.postgresql.user | quote }}
+  {{- else }}
+  POSTGRES_HOST: {{ required "external.postgresql.host is required when postgresql.enabled=false" $pg.host | quote }}
+  POSTGRES_PORT: {{ $pg.port | toString | quote }}
+  POSTGRES_DB: {{ $pg.database | quote }}
+  POSTGRES_USER: {{ $pg.user | quote }}
+  {{- end }}
+  {{- if .Values.qdrant.enabled }}
+  QDRANT_URL: {{ printf "http://%s:6333" (include "on.host" (list . "qdrant")) | quote }}
+  {{- else }}
+  QDRANT_URL: {{ required "external.qdrantUrl is required when qdrant.enabled=false" .Values.external.qdrantUrl | quote }}
+  {{- end }}
+  {{- if .Values.redis.enabled }}
+  REDIS_URL: {{ printf "redis://%s:6379/0" (include "on.host" (list . "redis")) | quote }}
+  {{- else }}
+  REDIS_URL: {{ required "external.redisUrl is required when redis.enabled=false" .Values.external.redisUrl | quote }}
+  {{- end }}
+  STORAGE_BACKEND: s3
+  {{- if .Values.seaweedfs.enabled }}
+  S3_ENDPOINT: {{ printf "http://%s:8333" (include "on.host" (list . "seaweedfs")) | quote }}
+  {{- else }}
+  S3_ENDPOINT: {{ required "external.s3.endpoint is required when seaweedfs.enabled=false" .Values.external.s3.endpoint | quote }}
+  {{- end }}
+  S3_BUCKET: {{ .Values.external.s3.bucket | quote }}
+  S3_REGION: {{ .Values.external.s3.region | quote }}
+  {{- if .Values.converter.enabled }}
+  CONVERTER_URL: {{ printf "http://%s:8080" (include "on.host" (list . "converter")) | quote }}
+  CONVERTER_TIMEOUT_SECONDS: {{ .Values.converter.timeoutSeconds | toString | quote }}
+  {{- end }}
+  WORKER_METRICS_PORT: "9101"

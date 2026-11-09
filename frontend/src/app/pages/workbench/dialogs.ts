@@ -12,6 +12,8 @@ import { MatSelectModule } from '@angular/material/select';
 import { AdminApi } from '../../core/admin.api';
 import { Grant, GrantRole, TreeNodeDto } from '../../core/api.models';
 import { ApiService, errorMessage } from '../../core/api.service';
+import { TranslatePipe, t } from '../../core/i18n';
+import { kindLabel } from './tree';
 
 export interface NameDialogData {
   title: string;
@@ -21,7 +23,14 @@ export interface NameDialogData {
 
 @Component({
   selector: 'app-name-dialog',
-  imports: [FormsModule, MatDialogModule, MatFormFieldModule, MatInputModule, MatButtonModule],
+  imports: [
+    TranslatePipe,
+    FormsModule,
+    MatDialogModule,
+    MatFormFieldModule,
+    MatInputModule,
+    MatButtonModule,
+  ],
   template: `
     <h2 mat-dialog-title>{{ data.title }}</h2>
     <form (ngSubmit)="ok()">
@@ -39,8 +48,8 @@ export interface NameDialogData {
         </mat-form-field>
       </mat-dialog-content>
       <mat-dialog-actions align="end">
-        <button mat-button type="button" mat-dialog-close>Cancel</button>
-        <button mat-flat-button type="submit" [disabled]="!value.trim()">Save</button>
+        <button mat-button type="button" mat-dialog-close>{{ 'Cancel' | t }}</button>
+        <button mat-flat-button type="submit" [disabled]="!value.trim()">{{ 'Save' | t }}</button>
       </mat-dialog-actions>
     </form>
   `,
@@ -66,6 +75,7 @@ interface Candidate {
 @Component({
   selector: 'app-share-dialog',
   imports: [
+    TranslatePipe,
     FormsModule,
     MatDialogModule,
     MatFormFieldModule,
@@ -77,10 +87,13 @@ interface Candidate {
     MatAutocompleteModule,
   ],
   template: `
-    <h2 mat-dialog-title>Share “{{ node.name }}”</h2>
+    <h2 mat-dialog-title>{{ 'Share “{name}”' | t: { name: node.name } }}</h2>
     <mat-dialog-content>
       <p class="muted">
-        Access granted here also applies to everything inside this {{ node.kind }}.
+        {{
+          'Access granted here also applies to everything inside this {kind}.'
+            | t: { kind: kindLabel(node.kind) }
+        }}
       </p>
       <mat-list>
         @for (g of grants(); track g.principal_type + g.principal_id) {
@@ -90,17 +103,22 @@ interface Candidate {
             }}</mat-icon>
             <span matListItemTitle>{{ g.principal_name ?? g.principal_id }}</span>
             <span matListItemLine>{{ g.role }}</span>
-            <button mat-icon-button matListItemMeta aria-label="Remove access" (click)="remove(g)">
+            <button
+              mat-icon-button
+              matListItemMeta
+              [attr.aria-label]="'Remove access' | t"
+              (click)="remove(g)"
+            >
               <mat-icon>close</mat-icon>
             </button>
           </mat-list-item>
         } @empty {
-          <p class="muted">No direct grants on this node.</p>
+          <p class="muted">{{ 'No direct grants on this node.' | t }}</p>
         }
       </mat-list>
       <div class="row add">
         <mat-form-field appearance="outline" class="grow">
-          <mat-label>Person or group</mat-label>
+          <mat-label>{{ 'Person or group' | t }}</mat-label>
           <input
             matInput
             [(ngModel)]="query"
@@ -121,27 +139,28 @@ interface Candidate {
           </mat-autocomplete>
         </mat-form-field>
         <mat-form-field appearance="outline">
-          <mat-label>Role</mat-label>
+          <mat-label>{{ 'Role' | t }}</mat-label>
           <mat-select [(ngModel)]="role">
-            <mat-option value="viewer">Viewer</mat-option>
-            <mat-option value="editor">Editor</mat-option>
-            <mat-option value="owner">Owner</mat-option>
+            <mat-option value="viewer">{{ 'Viewer' | t }}</mat-option>
+            <mat-option value="editor">{{ 'Editor' | t }}</mat-option>
+            <mat-option value="owner">{{ 'Owner' | t }}</mat-option>
           </mat-select>
         </mat-form-field>
-        <button mat-flat-button (click)="add()" [disabled]="!picked">Add</button>
+        <button mat-flat-button (click)="add()" [disabled]="!picked">{{ 'Add' | t }}</button>
       </div>
       @if (error()) {
         <p class="error-text">{{ error() }}</p>
       }
     </mat-dialog-content>
     <mat-dialog-actions align="end"
-      ><button mat-button mat-dialog-close>Close</button></mat-dialog-actions
+      ><button mat-button mat-dialog-close>{{ 'Close' | t }}</button></mat-dialog-actions
     >
   `,
   styles: '.add { align-items: baseline; } .grow { flex: 1; min-width: 200px; }',
 })
 export class ShareDialogComponent {
   protected readonly node = inject<TreeNodeDto>(MAT_DIALOG_DATA);
+  protected readonly kindLabel = kindLabel;
   private readonly api = inject(ApiService);
   private readonly admin = inject(AdminApi);
 

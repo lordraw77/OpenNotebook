@@ -32,6 +32,7 @@ release is also tagged `latest`; images are `linux/amd64` and carry OCI labels (
 | `lordraw/opennotebook-web` | `frontend/` | Angular SPA served by unprivileged nginx; proxies `/api` to the api service (unbuffered, for the chat event stream); security headers; serves the pdf.js worker from `/pdfjs/` | ~70 MB |
 | `lordraw/opennotebook-api` | `backend/` (target `api`) | FastAPI REST + SSE API; also runs the `migrate` one-shot job | ~735 MB |
 | `lordraw/opennotebook-worker` | `backend/` (target `worker`) | Celery ingestion worker: parsing (pdfplumber, python-docx, tree-sitter grammars, trafilatura, Pillow, pypdfium2), archive expansion, web fetching, summaries | ~735 MB |
+| `lordraw/opennotebook-converter` | `converter/` | Optional (`converter` profile): headless LibreOffice turning office documents into PDF for the worker; isolated on the internal `convert` network | ~570 MB |
 
 Third-party images: `postgres:18.6-alpine`, `qdrant/qdrant:v1.20.0`, `chrislusf/seaweedfs:4.52`, `redis:8.8.4-alpine`,
 and in profiles `quay.io/keycloak/keycloak:26.8.1`, `prom/prometheus:v3.15.1`, `grafana/grafana:13.2.5`.
@@ -52,9 +53,11 @@ dropped; they have a `HEALTHCHECK`, log JSON to stdout, and contain no model wei
 | `qdrant` | internal 6333 | — | TCP check (API key required for requests) |
 | `seaweedfs` | internal 8333 (S3) | — | master `/cluster/status` + S3 `/status` |
 | `redis` | internal 6379 | — | `PING` with password |
+| `converter` (profile) | internal 8080, `convert` network only | — | `GET /health` |
 
 Networks: `internal` (no internet access) for databases and storage; `egress` for api/worker, which call the providers;
-`public` for published ports. Only `web` is published by default.
+`public` for published ports; `convert` (no internet access) joins only the worker and the optional converter.
+Only `web` is published by default.
 
 ### First start (`migrate` job)
 
@@ -97,6 +100,7 @@ docker compose --env-file .env -f deploy/compose/docker-compose.yml --profile ob
 |---|---|---|
 | *(none)* | web, api, worker, migrate, postgres, qdrant, seaweedfs, redis | always: a complete, working instance |
 | `auth` | Keycloak on `${KEYCLOAK_BIND}:8081` (public URL `KEYCLOAK_PUBLIC_URL`) | OIDC single sign-on (see [deploy.md](deploy.md#single-sign-on-optional)) |
+| `converter` | Office-to-PDF converter (headless LibreOffice), reachable only by the worker on the `convert` network (no internet, no databases, no storage); set `CONVERTER_URL=http://converter:8080` | PPTX, XLSX, ODT/ODP/ODS, DOC/XLS/PPT, RTF uploads, and page numbers for DOCX |
 | `observability` | Prometheus on `127.0.0.1:9090` (api and worker metrics, alert rules), Grafana on `127.0.0.1:3000` (dashboard *OpenNotebook overview*), Jaeger on `127.0.0.1:16686` (traces: set `OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318`) | monitoring, alerts and tracing ([operations/monitoring.md](operations/monitoring.md)) |
 
 There is no model-serving profile. Ollama, if used, is your existing external server, set with `OLLAMA_API_BASE`.

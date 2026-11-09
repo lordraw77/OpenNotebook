@@ -12,11 +12,13 @@ import { AdminApi, ProjectSettingsDto } from '../../core/admin.api';
 import { TreeNodeDto } from '../../core/api.models';
 import { errorMessage } from '../../core/api.service';
 import { hasRole } from './tree';
+import { TranslatePipe, t } from '../../core/i18n';
 
 /** Project settings: which providers may process the project's content, and the search index state. */
 @Component({
   selector: 'app-project-settings-dialog',
   imports: [
+    TranslatePipe,
     DatePipe,
     FormsModule,
     MatButtonModule,
@@ -27,17 +29,19 @@ import { hasRole } from './tree';
     MatRadioModule,
   ],
   template: `
-    <h2 mat-dialog-title>Project settings · {{ project.name }}</h2>
+    <h2 mat-dialog-title>{{ 'Project settings · {name}' | t: { name: project.name } }}</h2>
     <mat-dialog-content>
       @if (settings(); as s) {
-        <h3><mat-icon inline>policy</mat-icon> Provider policy</h3>
+        <h3><mat-icon inline>policy</mat-icon> {{ 'Provider policy' | t }}</h3>
         <p class="muted">
-          Which model providers may receive this project's content (documents, questions, images).
-          It applies to every model call: chat, embeddings, OCR, summaries, graph, wiki.
+          {{
+            'Which model providers may receive this project’s content (documents, questions, images). It applies to every model call: chat, embeddings, OCR, summaries, graph, wiki.'
+              | t
+          }}
         </p>
         <mat-radio-group [(ngModel)]="mode" [disabled]="!canEdit" class="modes">
-          <mat-radio-button value="all">All configured providers</mat-radio-button>
-          <mat-radio-button value="some">Only the selected providers</mat-radio-button>
+          <mat-radio-button value="all">{{ 'All configured providers' | t }}</mat-radio-button>
+          <mat-radio-button value="some">{{ 'Only the selected providers' | t }}</mat-radio-button>
         </mat-radio-group>
         @if (mode === 'some') {
           <div class="providers">
@@ -54,30 +58,34 @@ import { hasRole } from './tree';
           </div>
           @if (allowed().size === 0) {
             <p class="warn">
-              No provider selected: nothing can be indexed or answered in this project.
+              {{ 'No provider selected: nothing can be indexed or answered in this project.' | t }}
             </p>
           }
         }
         @if (!canEdit) {
-          <p class="muted small">Only project owners can change the policy.</p>
+          <p class="muted small">{{ 'Only project owners can change the policy.' | t }}</p>
         }
 
-        <h3><mat-icon inline>database</mat-icon> Search index</h3>
+        <h3><mat-icon inline>database</mat-icon> {{ 'Search index' | t }}</h3>
         <p>
-          Serving searches: <strong>{{ s.index.serving_model ?? '—' }}</strong>
+          {{ 'Serving searches:' | t }} <strong>{{ s.index.serving_model ?? '—' }}</strong>
           @if (s.index.switch_pending) {
-            <br />Configured embedding model: <strong>{{ s.index.configured_model }}</strong>
+            <br />{{ 'Configured embedding model:' | t }}
+            <strong>{{ s.index.configured_model }}</strong>
           }
         </p>
         @if (s.index.switch_pending) {
           <mat-progress-bar mode="determinate" [value]="progress()"></mat-progress-bar>
           <p class="muted small">
-            {{ s.index.sources_on_configured_model }} / {{ s.index.sources }} sources re-indexed
-            with the new model. Searches keep using the current index until all are done, then
-            switch at once. Start or continue with RAG Status → Re-index.
+            {{
+              '{done} / {total} sources re-indexed with the new model. Searches keep using the current index until all are done, then switch at once. Start or continue with RAG Status → Re-index.'
+                | t: { done: s.index.sources_on_configured_model, total: s.index.sources }
+            }}
           </p>
         } @else if (s.index.switched_at) {
-          <p class="muted small">Last index switch: {{ s.index.switched_at | date: 'short' }}</p>
+          <p class="muted small">
+            {{ 'Last index switch: {date}' | t: { date: s.index.switched_at | date: 'short' } }}
+          </p>
         }
       } @else if (error()) {
         <p class="error-text">{{ error() }}</p>
@@ -89,10 +97,10 @@ import { hasRole } from './tree';
       }
     </mat-dialog-content>
     <mat-dialog-actions align="end">
-      <button mat-button mat-dialog-close>Close</button>
+      <button mat-button mat-dialog-close>{{ 'Close' | t }}</button>
       @if (canEdit) {
         <button mat-flat-button (click)="save()" [disabled]="!settings() || saving()">
-          Save policy
+          {{ 'Save policy' | t }}
         </button>
       }
     </mat-dialog-actions>

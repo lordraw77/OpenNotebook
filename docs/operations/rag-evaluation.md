@@ -39,6 +39,32 @@ none, graph expansion 4 passages.
 | false abstention | 0.00 |
 | median answer time | 5.8 s |
 
-Limits of this set: it is small and the hybrid search alone already finds every multi-hop source, so it cannot
+## Graph set (2026-11-09)
+
+`--set graph` indexes `eval/graph` (24 fictional documents: for each of 8 chains a project page, a team profile
+and a system page) and asks 16 questions, 12 of them multi-hop: "In which data centre is the data of Project X
+hosted?" needs the project (names the lead), the team profile (the bridge: names the lead and the system) and
+the system page (names the data centre). It also reports how much of the expected context comes from search
+alone and with the knowledge-graph expansion.
+
+Same models as the baseline. Result with 4 graph passages per answer:
+
+| Metric | Value |
+|---|---|
+| multi-hop coverage@10 (search) | 0.69 |
+| context coverage, search only / with graph | 0.76 / 0.76 |
+| bridge passage in context / via graph | 0.25 / 0.00 |
+| multi-hop answer accuracy | 0.17 |
+| false abstention | 0.60 |
+| citation precision | 0.53 |
+
+Finding: on this set graph expansion adds **no** useful passage (the graph passages are other documents, never
+the bridge) and multi-hop answers mostly abstain. The rank-weighted scoring of expansion candidates was tried
+(unit-tested) and did not change the numbers. Next step is to inspect the extracted graph for these documents
+(entities of the team profiles may not link the lead to the system), then iterate on extraction prompts or the
+expansion algorithm and re-run the set. Until then the M4 exit criterion (graph expansion improves multi-hop
+questions) is not demonstrated.
+
+Limits of the base set: it is small and the hybrid search alone already finds every multi-hop source, so it cannot
 show the benefit of graph expansion (the M4 exit criterion); a larger corpus with indirect references is needed
 for that. Answer accuracy is a term match, not a judgement of the whole answer.

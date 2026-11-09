@@ -1,6 +1,6 @@
 [project]
 name = "opennotebook"
-version = "0.5.1"
+version = "1.0.0"
 description = "OpenNotebook backend: API, ingestion worker and model gateway"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -55,6 +55,12 @@ dependencies = [
 
 [project.scripts]
 opennotebook = "opennotebook.cli:main"
+
+[tool.uv]
+# Security: filelock >= 4.2.1 fixes 13 CVEs. LiteLLM 1.108.0 still declares filelock < 4; LiteLLM 1.108.3
+# relaxed it to < 5 (compatible), but is too recent for our pinning policy (>= 2 weeks). Drop this override when
+# LiteLLM is upgraded (after 2026-11-21).
+override-dependencies = ["filelock==4.2.1"]
 
 [dependency-groups]
 dev = [

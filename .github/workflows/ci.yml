@@ -58,11 +58,30 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci --no-audit --no-fund
       - run: npm run lint
+      - name: Italian translations cover every marked UI text
+        run: node ../scripts/check-i18n.mjs
       - run: npm test
       - run: npx ng build --configuration production
 
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+      - run: helm lint deploy/helm/opennotebook
+      - name: Render and validate the manifests (default, external data services, converter)
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz | tar xz kubeconform
+          chart=deploy/helm/opennotebook
+          helm template rel $chart --set converter.enabled=true --set ingress.enabled=true | ./kubeconform -strict -summary -kubernetes-version 1.33.0
+          helm template rel $chart --set postgresql.enabled=false --set qdrant.enabled=false --set seaweedfs.enabled=false --set redis.enabled=false \
+            --set external.postgresql.host=pg --set external.qdrantUrl=http://q:6333 --set external.redisUrl=redis://r:6379/0 \
+            --set external.s3.endpoint=http://s3:9000 --set existingSecret=mine | ./kubeconform -strict -summary -kubernetes-version 1.33.0
+
   dependencies:
-    # Known vulnerabilities in the shipped dependencies (accepted exceptions: docs/operations/security.md)
+    # Known vulnerabilities in the shipped dependencies (exceptions, if any: docs/operations/security.md)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -71,7 +90,8 @@ jobs:
         working-directory: backend
         run: |
           uv export --frozen --no-dev --no-hashes --no-emit-project > /tmp/requirements.txt
-          uvx pip-audit -r /tmp/requirements.txt --progress-spinner off $(sed -e 's/#.*//' ../.pip-audit-ignore | xargs -r -n1 echo --ignore-vuln)
+          # audit exactly the locked versions (the lock applies uv overrides that pip would not re-resolve)
+          uvx pip-audit -r /tmp/requirements.txt --disable-pip --no-deps --progress-spinner off $(sed -e 's/#.*//' ../.pip-audit-ignore | xargs -r -n1 echo --ignore-vuln)
       - uses: actions/setup-node@v5
         with:
           node-version: "24"
@@ -108,6 +128,15 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
           trivyignores: .trivyignore
+      - name: Converter image vulnerability scan
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          scan-type: image
+          image-ref: lordraw/opennotebook-converter:${{ env.VERSION }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          trivyignores: .trivyignore
       - name: SBOM (SPDX) of the api/worker image
         uses: anchore/sbom-action@v0.24.2
         with:
@@ -117,4 +146,4 @@ jobs:
       - name: Production Compose observability config in sync
         run: python3 scripts/sync_observability.py --check
       - name: Validate the deployment Compose file
-        run: cp .env.ci deploy/production/.env && docker compose -f deploy/production/docker-compose.yml --profile auth --profile observability config --quiet
+        run: cp .env.ci deploy/production/.env && docker compose -f deploy/production/docker-compose.yml --profile auth --profile observability --profile converter config --quiet

@@ -63,7 +63,7 @@ def context_entry(n: int, hit: SearchHit) -> dict:
         "source_id": str(hit.source.id),
         "source_title": hit.source.title,
         "source_kind": hit.source.kind.value,
-        "mime_type": hit.source.mime_type,
+        "mime_type": hit.source.view_mime_type,
         "notebook_id": str(hit.notebook.id),
         "notebook_name": hit.notebook.name,
         "heading_path": list(c.heading_path or []),

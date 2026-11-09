@@ -15,7 +15,8 @@ import logging
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from opennotebook.ingestion.vectors import VectorIndex, collection_for
@@ -32,9 +33,13 @@ async def settings_row(
 ) -> ProjectSettings:
     row = await session.get(ProjectSettings, project_id, with_for_update=lock)
     if row is None:
-        row = ProjectSettings(project_id=project_id)
-        session.add(row)
-        await session.flush()
+        # Concurrent jobs of a new project race to create the row: insert-if-missing, then read it back.
+        await session.execute(
+            insert(ProjectSettings)
+            .values(project_id=project_id)
+            .on_conflict_do_nothing(index_elements=["project_id"])
+        )
+        row = await session.get_one(ProjectSettings, project_id, with_for_update=lock, populate_existing=True)
     return row
 
 
@@ -44,8 +49,13 @@ async def serving_model_id(
     """The model whose index answers searches; the first indexed model becomes it."""
     row = await settings_row(session, project_id)
     if row.embedding_model_id is None and default is not None:
-        row.embedding_model_id = default
-        await session.flush()
+        # atomic: of two concurrent first jobs, only one sets it, the other reads the winner's value
+        await session.execute(
+            update(ProjectSettings)
+            .where(ProjectSettings.project_id == project_id, ProjectSettings.embedding_model_id.is_(None))
+            .values(embedding_model_id=default)
+        )
+        await session.refresh(row)
     return row.embedding_model_id
 
 

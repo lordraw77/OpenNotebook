@@ -55,10 +55,8 @@ Continuous RAG quality evaluation from M2: a question/expected-answer dataset pe
   only. Single compressed files (`.gz` without TAR) are refused.
 - **No JavaScript rendering** of web pages (Playwright would add a browser to the worker image): pages that render
   their content client-side yield little or no text.
-- **DOCX/PPTX/ODT → PDF conversion (LibreOffice) is not shipped**: it would add ~350 MB to the worker, and the
-  converter must run without network access (documents can reference remote resources). It is planned as an
-  optional, network-isolated converter service in M6; until then DOCX citations open the text viewer, and PPTX,
-  XLSX and ODF are refused.
+- **Office → PDF conversion** is the optional `converter` service (shipped after M6, see below); without it DOCX
+  citations open the text viewer, and PPTX, XLSX, ODF and legacy Office files are refused.
 - Images embedded in PDF/DOCX are not extracted (only scanned pages are transcribed); OCR text is anchored to the
   whole page or image, not to word boxes.
 - Archive extraction holds the archive in memory (up to `UPLOAD_MAX_MB`); members are streamed with byte limits.
@@ -100,12 +98,9 @@ run on the test host; results in [../operations/performance.md](../operations/pe
 
 Still open (candidates for the next iterations):
 
-- **Italian UI (NFR-06)**: the interface is English only; answers already follow the language of the question.
-- Network-isolated parsing worker and the DOCX/PPTX → PDF converter service (threat T5, M3 limitations).
-- Database spans in traces (waiting for SQLAlchemy 2.1 support in the OpenTelemetry instrumentation).
-- `filelock` CVEs accepted until LiteLLM allows `filelock>=4.2.1` ([../operations/security.md](../operations/security.md)).
+- Network-less parsing worker for the deterministic parsers (T5 residual; LibreOffice is already isolated in the
+  `converter` service).
 - A larger evaluation corpus to measure the effect of graph expansion on multi-hop questions.
-- Lazy tree / paginated source lists for notebooks with thousands of sources; Helm chart (NFR-08).
 
 ## 3. Open decisions
 

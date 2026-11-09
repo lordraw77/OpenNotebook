@@ -1,11 +1,27 @@
 import { HttpClient, HttpEvent, HttpEventType, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, filter, firstValueFrom, map } from 'rxjs';
+import { t } from './i18n';
 
 // Types mirroring backend/src/opennotebook/api/{sources,notes,ingestion_status}.py
 
 export type SourceStatus = 'queued' | 'parsing' | 'chunking' | 'embedding' | 'ready' | 'failed';
 export const TERMINAL: SourceStatus[] = ['ready', 'failed'];
+
+/** Translated name of a source or job status (unknown values are shown as they are). */
+export function statusLabel(status: string | null | undefined): string {
+  const labels: Record<string, string> = {
+    queued: t('queued'),
+    parsing: t('parsing'),
+    chunking: t('chunking'),
+    embedding: t('embedding'),
+    ready: t('ready'),
+    failed: t('failed'),
+    pending: t('pending'),
+    running: t('running'),
+  };
+  return status ? (labels[status] ?? status) : '';
+}
 
 export interface SourceDto {
   id: string;
@@ -24,6 +40,8 @@ export interface SourceDto {
   embedding_model_id: string | null;
   note_id: string | null;
   parent_source_id: string | null;
+  /** Members of an archive / pages of a crawl. */
+  child_count: number;
   uri: string | null;
   language: string | null;
   summary: string | null;
@@ -45,6 +63,8 @@ export interface SourceDto {
     content_type?: string;
     fetched_at?: string;
     crawl?: { root: string; depth_left: number; max_pages: number; links_followed?: number };
+    /** `pdf`: an office document converted to PDF (page anchors, PDF viewer). */
+    rendition?: 'pdf';
   };
   created_at: string;
   indexed_at: string | null;
@@ -170,6 +190,24 @@ export interface IngestionStatus {
   }[];
 }
 
+export interface SourceCounts {
+  /** Top-level sources directly in each node. */
+  nodes: Record<string, number>;
+  /** Sources still being processed in the visible tree. */
+  processing: number;
+}
+
+export interface SourceQuery {
+  scopeId?: string;
+  nodeId?: string;
+  parentId?: string;
+  topLevel?: boolean;
+  q?: string;
+  ids?: string[];
+  offset?: number;
+  limit?: number;
+}
+
 export type UploadEvent = { progress: number } | { done: UploadResult[] };
 
 export function formatBytes(n: number): string {
@@ -185,6 +223,31 @@ export class SourcesApi {
   list(scopeId: string | null = null): Promise<SourceDto[]> {
     const params = scopeId ? new HttpParams().set('scope_id', scopeId) : undefined;
     return firstValueFrom(this.http.get<SourceDto[]>('/api/sources', { params }));
+  }
+
+  /** One page of sources and the total matching the filters. */
+  async page(query: SourceQuery): Promise<{ items: SourceDto[]; total: number }> {
+    let params = new HttpParams();
+    const set: Record<string, string | number | boolean | undefined> = {
+      scope_id: query.scopeId,
+      node_id: query.nodeId,
+      parent_id: query.parentId,
+      top_level: query.topLevel,
+      q: query.q,
+      offset: query.offset,
+      limit: query.limit,
+    };
+    for (const [k, v] of Object.entries(set)) if (v !== undefined) params = params.set(k, v);
+    for (const id of query.ids ?? []) params = params.append('ids', id);
+    const res = await firstValueFrom(
+      this.http.get<SourceDto[]>('/api/sources', { params, observe: 'response' }),
+    );
+    const items = res.body ?? [];
+    return { items, total: Number(res.headers.get('X-Total-Count') ?? items.length) };
+  }
+
+  counts(): Promise<SourceCounts> {
+    return firstValueFrom(this.http.get<SourceCounts>('/api/sources/counts'));
   }
 
   get(id: string): Promise<SourceDto> {
@@ -235,10 +298,10 @@ export class SourcesApi {
     return firstValueFrom(this.http.get(`/api/sources/${id}/text`, { responseType: 'text' }));
   }
 
-  /** Original file bytes (e.g. a PDF for the viewer). */
+  /** Bytes the viewer renders: the PDF rendition of a converted office document, else the original. */
   fileBytes(id: string): Promise<ArrayBuffer> {
     return firstValueFrom(
-      this.http.get(`/api/sources/${id}/file`, { responseType: 'arraybuffer' }),
+      this.http.get(`/api/sources/${id}/view`, { responseType: 'arraybuffer' }),
     );
   }
 

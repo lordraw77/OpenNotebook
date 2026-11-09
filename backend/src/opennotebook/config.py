@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     # images inside archives cost an OCR and a vision call each: off by default
     archive_index_images: bool = False
 
+    # Office documents: the isolated converter service (headless LibreOffice, `converter` profile) turns
+    # PPTX, XLSX, ODF, legacy DOC/XLS/PPT and RTF into PDF, which gives page anchors and the PDF viewer.
+    # Without it only DOCX (python-docx, no pages) is supported. With it, DOCX is converted too unless
+    # CONVERT_DOCX=false.
+    converter_url: str | None = None
+    converter_timeout_seconds: float = 180
+    convert_docx: bool = True
+
     # Images and scanned PDF pages
     image_max_pixels: int = 50_000_000
     # longest side sent to OCR / vision providers

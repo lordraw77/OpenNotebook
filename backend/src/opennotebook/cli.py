@@ -40,6 +40,42 @@ def cmd_migrate(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_wait_migrations(args: argparse.Namespace) -> int:
+    """Waits until the database is reachable and its schema is at the latest migration.
+
+    For orchestrators (Kubernetes init containers): one job migrates, the api and workers wait.
+    """
+    import time
+
+    from alembic.runtime.migration import MigrationContext
+    from alembic.script import ScriptDirectory
+    from sqlalchemy import create_engine
+    from sqlalchemy.exc import OperationalError
+
+    from opennotebook.config import get_settings
+
+    head = ScriptDirectory.from_config(_alembic_config()).get_current_head()
+    engine = create_engine(get_settings().database_url, pool_pre_ping=True)
+    deadline = time.monotonic() + args.timeout
+    current: str | None = None
+    try:
+        while True:
+            try:
+                with engine.connect() as conn:
+                    current = MigrationContext.configure(conn).get_current_revision()
+                if current == head:
+                    print(f"database schema at {head}")
+                    return 0
+            except OperationalError:
+                current = "unreachable"
+            if time.monotonic() >= deadline:
+                print(f"timed out: database schema {current or 'empty'}, expected {head}", file=sys.stderr)
+                return 1
+            time.sleep(min(args.interval, max(0.0, deadline - time.monotonic())))
+    finally:
+        engine.dispose()
+
+
 async def _bootstrap(sync: bool) -> dict:
     from sqlalchemy import func, select
 
@@ -306,6 +342,12 @@ def main(argv: list[str] | None = None) -> int:
     p_worker.set_defaults(func=cmd_worker)
 
     sub.add_parser("migrate", help="apply database migrations").set_defaults(func=cmd_migrate)
+    p_wait = sub.add_parser(
+        "wait-migrations", help="wait until the database schema is at the latest migration (init containers)"
+    )
+    p_wait.add_argument("--timeout", type=float, default=900, help="seconds (default 900)")
+    p_wait.add_argument("--interval", type=float, default=3, help="seconds between checks")
+    p_wait.set_defaults(func=cmd_wait_migrations)
     p_boot = sub.add_parser("bootstrap", help="first-start initialization (idempotent)")
     p_boot.add_argument("--no-sync", action="store_true", help="do not sync provider model catalogs")
     p_boot.set_defaults(func=cmd_bootstrap)

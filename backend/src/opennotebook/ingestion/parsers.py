@@ -1,5 +1,7 @@
 """Deterministic parsers (no ML models): PDF (pdfplumber), DOCX (python-docx), Markdown and plain text.
 
+Other office formats are converted to PDF by the isolated converter service (`office` format, see convert.py).
+
 Content type is detected from the bytes, never from the file extension alone.
 """
 
@@ -24,10 +26,12 @@ class ParseError(ValueError):
 
 @dataclass(frozen=True)
 class Sniffed:
-    format: str  # pdf | docx | markdown | text | html | code | image | zip | tar
+    format: str  # pdf | docx | office | markdown | text | html | code | image | zip | tar
     mime_type: str
     kind: str = "file"  # SourceKind value
     language: str | None = None
+    # office formats: the extension that tells the converter which import filter to use
+    extension: str | None = None
 
 
 MARKDOWN_EXT = (".md", ".markdown", ".mdown", ".mkd")
@@ -67,6 +71,38 @@ def _decompressed_head(data: bytes, codec: str, size: int = 1024) -> bytes:
         raise UnsupportedContent(f"Corrupted {codec} stream") from exc
 
 
+_OPENXML = "application/vnd.openxmlformats-officedocument"
+_OOXML = {
+    "ppt/presentation.xml": ("pptx", f"{_OPENXML}.presentationml.presentation"),
+    "xl/workbook.xml": ("xlsx", f"{_OPENXML}.spreadsheetml.sheet"),
+}
+_ODF = {
+    "application/vnd.oasis.opendocument.text": "odt",
+    "application/vnd.oasis.opendocument.presentation": "odp",
+    "application/vnd.oasis.opendocument.spreadsheet": "ods",
+}
+_OLE2 = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+_LEGACY = {
+    ".doc": "application/msword",
+    ".xls": "application/vnd.ms-excel",
+    ".ppt": "application/vnd.ms-powerpoint",
+}
+
+
+def converter_enabled() -> bool:
+    from opennotebook.config import get_settings
+
+    return bool(get_settings().converter_url)
+
+
+def _office(extension: str, mime: str) -> Sniffed:
+    if not converter_enabled():
+        raise UnsupportedContent(
+            f"{extension.upper()} files need the converter service (CONVERTER_URL, `converter` profile)"
+        )
+    return Sniffed("office", mime, extension=extension)
+
+
 def sniff(data: bytes, filename: str) -> Sniffed:
     name = filename.lower()
     if data.startswith(b"%PDF-"):
@@ -75,13 +111,32 @@ def sniff(data: bytes, filename: str) -> Sniffed:
         try:
             with zipfile.ZipFile(io.BytesIO(data)) as z:
                 names = set(z.namelist())
-        except zipfile.BadZipFile as exc:
+                odf = ""
+                if "mimetype" in names:
+                    odf = z.read("mimetype")[:100].decode("ascii", "replace").strip()
+        except (zipfile.BadZipFile, KeyError) as exc:
             raise UnsupportedContent("Corrupted ZIP container") from exc
         if "word/document.xml" in names:
-            return Sniffed("docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-        if "[Content_Types].xml" in names or "mimetype" in names:
-            raise UnsupportedContent("Office formats other than DOCX (PPTX, XLSX, ODF) are not supported yet")
+            return Sniffed(
+                "docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                extension="docx",
+            )
+        for marker, (extension, mime) in _OOXML.items():
+            if marker in names:
+                return _office(extension, mime)
+        if odf in _ODF:
+            return _office(_ODF[odf], odf)
+        if "[Content_Types].xml" in names or odf:
+            raise UnsupportedContent("Unsupported office format")
         return Sniffed("zip", "application/zip", kind="archive")
+    if data.startswith(_OLE2):
+        for extension, mime in _LEGACY.items():
+            if name.endswith(extension):
+                return _office(extension[1:], mime)
+        raise UnsupportedContent("Legacy Office files must have a .doc, .xls or .ppt extension")
+    if data.startswith(b"{\\rtf") and converter_enabled():
+        return Sniffed("office", "application/rtf", extension="rtf")
     if data.startswith(b"7z\xbc\xaf\x27\x1c"):
         raise UnsupportedContent("7z archives are not supported; use ZIP or TAR (.tar, .tar.gz, .tar.xz)")
     if data.startswith(b"Rar!"):

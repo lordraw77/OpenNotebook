@@ -176,8 +176,15 @@ Each step is idempotent, retryable and versioned (`pipeline_version`, `embedding
   asks the `summary` chain for JSON `{summary, questions}` built from the first `SUMMARY_INPUT_CHARS`.
   `summary_status` goes pending → done | failed | skipped (no model). The source stays searchable meanwhile, and a
   failure never fails the source. Code, archives and archive or crawl children get no summary.
-- Not implemented: 7z and RAR, JavaScript rendering of web pages (Playwright), DOCX/PPTX → PDF conversion
-  (LibreOffice), images embedded inside PDF/DOCX, ClamAV.
+- **Office documents** (after M6, `ingestion/convert.py`, `converter/`): with `CONVERTER_URL` set, PPTX, XLSX,
+  ODT/ODP/ODS, DOC/XLS/PPT, RTF and (unless `CONVERT_DOCX=false`) DOCX are sent to the isolated converter
+  (headless LibreOffice, `convert` network, reachable only by the worker). The PDF is stored as the `pdf` blob,
+  `metadata.rendition = "pdf"`, and parsed like any PDF (pages, boxes, OCR of image-only slides). `/view` serves
+  the rendition, `/file` the original. A converter that is down or busy makes the job retry; a document it cannot
+  convert fails, except DOCX, which falls back to python-docx without page numbers. Office formats are detected
+  from the container content (OOXML parts, ODF `mimetype`) and, for OLE2 legacy files, the extension.
+- Not implemented: 7z and RAR, JavaScript rendering of web pages (Playwright), images embedded inside PDF/DOCX,
+  ClamAV.
 
 ## 4. Retrieval and grounded chat
 
@@ -339,7 +346,7 @@ backoff up to `INGESTION_MAX_ATTEMPTS`, parse errors fail immediately.
 | Type | Anchor stored on the chunk | Rendering |
 |---|---|---|
 | PDF | page + list of bboxes in PDF points, top-left origin (from pdfplumber) + page sizes | pdf.js (lazy-loaded, worker served from `/pdfjs/`, WASM disabled for the CSP) with rectangle overlay ✅ M2 |
-| DOCX/PPTX | converted to PDF (LibreOffice headless, in the worker image) at ingestion → as PDF | pdf.js |
+| Office (DOCX, PPTX, XLSX, ODF, DOC/XLS/PPT, RTF) | converted to PDF by the isolated `converter` service at ingestion → as PDF (`GET /api/sources/{id}/view`); without the converter DOCX uses text offsets | pdf.js ✅ |
 | Text / Markdown / note / web | character offsets on normalized text (`GET /api/sources/{id}/text`) | text viewer with `<mark>` ✅ M2 |
 | Code | start/end lines; text = original file | monospace text viewer with the passage marked ✅ M3 |
 | Image | whole-image box (OCR providers return no word boxes) | image shown above its OCR text and description, passage marked ✅ M3 |
@@ -348,10 +355,21 @@ backoff up to `INGESTION_MAX_ATTEMPTS`, parse errors fail immediately.
 
 - Angular (current LTS at bootstrap), standalone components, signals, lazy routes per page.
 - Angular Material: `mat-tree` (nested, `childrenAccessor`) with slide toggles for the active switch, CSS-grid 3-column layout with collapsible side columns, `mat-table`, `mat-select`, dialogs, snack bars. No external CDN: fonts and icons are bundled.
+- Lazy source tree: the workbench loads the hierarchy (`GET /api/nodes`) and the per-node source counts
+  (`GET /api/sources/counts`, which also reports how many sources are still processing and drives polling). Expanding
+  a node loads its top-level sources (`GET /api/sources?node_id=…&top_level=true&limit=100`), expanding an archive or
+  a crawl loads its members (`parent_id=…`); "Load more" fetches the next page (`offset`, total in `X-Total-Count`).
+  Polling refreshes only the loaded pages; a source opened by link or citation is fetched by id.
 - Routes: `/login`, `/workbench`, `/upload`, `/status`, `/settings/models`, `/settings/providers` (admin), `/settings/users` (admin).
 - Authentication: access token in memory, refresh token in an `HttpOnly`, `SameSite=Strict` cookie scoped to `/api/auth`, rotated on every refresh (reuse revokes all sessions).
 - Streaming chat via `fetch` + ReadableStream (SSE).
-- i18n: English (default), Italian.
+- i18n (NFR-06): English and Italian. UI texts are marked with the `t` pipe (`'English text' | t`) or `t('…')` in
+  code; the English text is the key, so a missing translation falls back to English. The language is chosen
+  before bootstrap (stored preference, else the browser language), sets `LOCALE_ID` for dates and numbers, and
+  switching (top bar) reloads the page. `frontend/src/app/i18n/it.ts` holds the Italian texts;
+  `scripts/check-i18n.mjs` (CI) fails when a marked text has no translation. Server messages are shown in
+  English except the most common ones, which the client translates; generated content (answers, summaries,
+  wiki pages) follows the language of the question or of the documents.
 
 ## 7. Packaging
 

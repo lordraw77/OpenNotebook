@@ -29,6 +29,7 @@ import { errorMessage } from '../../core/api.service';
 import { Attempt, ChatApi, ChatEvent, ConversationDto, MessageDto } from '../../core/chat.api';
 import { Citation, SourcesApi, citationLocation } from '../../core/sources.api';
 import { AnswerViewComponent } from './answer-view.component';
+import { TranslatePipe, t } from '../../core/i18n';
 
 interface Pending {
   question: string;
@@ -50,6 +51,7 @@ export interface NotebookOption {
 @Component({
   selector: 'app-chat-panel',
   imports: [
+    TranslatePipe,
     DecimalPipe,
     FormsModule,
     TextFieldModule,
@@ -67,13 +69,15 @@ export interface NotebookOption {
   template: `
     <div class="bar">
       <mat-form-field appearance="outline" class="conv" subscriptSizing="dynamic">
-        <mat-label>Conversation</mat-label>
+        <mat-label>{{ 'Conversation' | t }}</mat-label>
         <mat-select
           [value]="conversationId()"
           (valueChange)="openConversation($event)"
           [disabled]="!scopeId() || streaming()"
         >
-          <mat-option [value]="null"><mat-icon>add_comment</mat-icon> New chat</mat-option>
+          <mat-option [value]="null"
+            ><mat-icon>add_comment</mat-icon> {{ 'New chat' | t }}</mat-option
+          >
           @for (c of conversations(); track c.id) {
             <mat-option [value]="c.id">{{ c.title }}</mat-option>
           }
@@ -83,17 +87,17 @@ export interface NotebookOption {
         <button
           mat-icon-button
           [matMenuTriggerFor]="convMenu"
-          aria-label="Conversation actions"
+          [attr.aria-label]="'Conversation actions' | t"
           [disabled]="streaming()"
         >
           <mat-icon>more_vert</mat-icon>
         </button>
         <mat-menu #convMenu="matMenu">
           <button mat-menu-item (click)="renameConversation()">
-            <mat-icon>edit</mat-icon> Rename
+            <mat-icon>edit</mat-icon> {{ 'Rename' | t }}
           </button>
           <button mat-menu-item (click)="deleteConversation()">
-            <mat-icon>delete</mat-icon> Delete
+            <mat-icon>delete</mat-icon> {{ 'Delete' | t }}
           </button>
         </mat-menu>
       }
@@ -103,14 +107,21 @@ export interface NotebookOption {
       @if (!scopeId()) {
         <div class="placeholder">
           <mat-icon>forum</mat-icon>
-          <p>Select a project, workspace or notebook in the tree to chat with its sources.</p>
+          <p>
+            {{
+              'Select a project, workspace or notebook in the tree to chat with its sources.' | t
+            }}
+          </p>
         </div>
       } @else if (messages().length === 0 && !pending()) {
         <div class="placeholder">
           <mat-icon>auto_awesome</mat-icon>
-          <p>Ask a question about the active sources in this scope.</p>
+          <p>{{ 'Ask a question about the active sources in this scope.' | t }}</p>
           <p class="muted">
-            Answers use only these sources, and every statement links to the passage it comes from.
+            {{
+              'Answers use only these sources, and every statement links to the passage it comes from.'
+                | t
+            }}
           </p>
         </div>
       }
@@ -123,8 +134,11 @@ export interface NotebookOption {
             @if (m.checks.mode === 'research') {
               <details class="research">
                 <summary>
-                  <mat-icon inline>travel_explore</mat-icon> Research report ·
-                  {{ m.checks.plan?.length ?? 0 }} search steps, {{ m.context.length }} passages
+                  <mat-icon inline>travel_explore</mat-icon>
+                  {{
+                    'Research report · {steps} search steps, {passages} passages'
+                      | t: { steps: m.checks.plan?.length ?? 0, passages: m.context.length }
+                  }}
                 </summary>
                 <ol class="plan">
                   @for (q of m.checks.plan ?? []; track $index) {
@@ -141,7 +155,7 @@ export interface NotebookOption {
             @if (m.status === 'error') {
               <p class="error-text"><mat-icon inline>error</mat-icon> {{ m.error }}</p>
             } @else if (m.status === 'stopped') {
-              <p class="muted small"><mat-icon inline>stop_circle</mat-icon> Stopped</p>
+              <p class="muted small"><mat-icon inline>stop_circle</mat-icon> {{ 'Stopped' | t }}</p>
             }
             @if (m.citations.length) {
               <div class="sources">
@@ -149,7 +163,7 @@ export interface NotebookOption {
                   <button type="button" class="src" (click)="openCitation.emit(c)">
                     <span class="n">{{ c.n }}</span>
                     @if (c.via === 'graph') {
-                      <mat-icon class="via" matTooltip="Found through the knowledge graph"
+                      <mat-icon class="via" [matTooltip]="'Found through the knowledge graph' | t"
                         >hub</mat-icon
                       >
                     }
@@ -173,7 +187,7 @@ export interface NotebookOption {
                 <span class="model" [matTooltip]="attemptsText(m.attempts)">
                   <mat-icon inline>smart_toy</mat-icon> {{ m.model_label }}
                   @if (fallbacks(m.attempts)) {
-                    <span class="fallback">fallback</span>
+                    <span class="fallback">{{ 'fallback' | t }}</span>
                   }
                 </span>
               }
@@ -183,8 +197,8 @@ export interface NotebookOption {
               <span class="spacer"></span>
               <button
                 mat-icon-button
-                matTooltip="Copy"
-                aria-label="Copy answer"
+                [matTooltip]="'Copy' | t"
+                [attr.aria-label]="'Copy answer' | t"
                 (click)="copy(m.content)"
               >
                 <mat-icon>content_copy</mat-icon>
@@ -193,8 +207,8 @@ export interface NotebookOption {
                 @if (notebooks().length === 1) {
                   <button
                     mat-icon-button
-                    [matTooltip]="'Save as note in ' + notebooks()[0].name"
-                    aria-label="Save as note"
+                    [matTooltip]="'Save as note in {name}' | t: { name: notebooks()[0].name }"
+                    [attr.aria-label]="'Save as note' | t"
                     (click)="saveNote(m, notebooks()[0].id)"
                   >
                     <mat-icon>note_add</mat-icon>
@@ -202,8 +216,8 @@ export interface NotebookOption {
                 } @else {
                   <button
                     mat-icon-button
-                    matTooltip="Save as note"
-                    aria-label="Save as note"
+                    [matTooltip]="'Save as note' | t"
+                    [attr.aria-label]="'Save as note' | t"
                     [matMenuTriggerFor]="nbMenu"
                   >
                     <mat-icon>note_add</mat-icon>
@@ -256,7 +270,7 @@ export interface NotebookOption {
               <span class="model" [matTooltip]="attemptsText(p.attempts)">
                 <mat-icon inline>smart_toy</mat-icon> {{ p.model }}
                 @if (fallbacks(p.attempts)) {
-                  <span class="fallback">fallback</span>
+                  <span class="fallback">{{ 'fallback' | t }}</span>
                 }
               </span>
             </footer>
@@ -270,7 +284,9 @@ export interface NotebookOption {
 
     <form class="composer" (ngSubmit)="send()">
       <mat-form-field appearance="outline" class="grow" subscriptSizing="dynamic">
-        <mat-label>{{ scopeId() ? 'Ask the sources in scope' : 'Select a scope first' }}</mat-label>
+        <mat-label>{{
+          scopeId() ? ('Ask the sources in scope' | t) : ('Select a scope first' | t)
+        }}</mat-label>
         <textarea
           matInput
           name="q"
@@ -287,16 +303,19 @@ export interface NotebookOption {
         [checked]="research()"
         (change)="research.set($event.checked)"
         [disabled]="streaming()"
-        matTooltip="Plan sub-questions, search each one and write a structured report with citations (slower)"
-        >Deep research</mat-slide-toggle
+        [matTooltip]="
+          'Plan sub-questions, search each one and write a structured report with citations (slower)'
+            | t
+        "
+        >{{ 'Deep research' | t }}</mat-slide-toggle
       >
       @if (streaming()) {
         <button mat-stroked-button type="button" (click)="stop()">
-          <mat-icon>stop</mat-icon> Stop
+          <mat-icon>stop</mat-icon> {{ 'Stop' | t }}
         </button>
       } @else {
         <button mat-flat-button type="submit" [disabled]="!scopeId() || !question.trim()">
-          <mat-icon>send</mat-icon> Ask
+          <mat-icon>send</mat-icon> {{ 'Ask' | t }}
         </button>
       }
     </form>
@@ -696,7 +715,7 @@ export class ChatPanelComponent {
 
   async deleteConversation(): Promise<void> {
     const id = this.conversationId();
-    if (!id || !confirm('Delete this conversation?')) return;
+    if (!id || !confirm(t('Delete this conversation?'))) return;
     try {
       await this.api.remove(id);
       this.conversations.update((list) => list.filter((c) => c.id !== id));
@@ -709,7 +728,7 @@ export class ChatPanelComponent {
   async saveNote(m: MessageDto, notebookId: string): Promise<void> {
     const list = this.messages();
     const question = list[list.indexOf(m) - 1];
-    const title = (question?.role === 'user' ? question.content : 'Chat answer')
+    const title = (question?.role === 'user' ? question.content : t('Chat answer'))
       .split('\n')[0]
       .slice(0, 120);
     try {
@@ -719,7 +738,7 @@ export class ChatPanelComponent {
         indexed: false,
         from_message_id: m.id,
       });
-      this.toast('Saved as note');
+      this.toast(t('Saved as note'));
       this.noteSaved.emit();
     } catch (err) {
       this.toast(errorMessage(err));
@@ -729,22 +748,28 @@ export class ChatPanelComponent {
   async copy(text: string): Promise<void> {
     try {
       await navigator.clipboard.writeText(text);
-      this.toast('Copied');
+      this.toast(t('Copied'));
     } catch {
-      this.toast('Copy is not available in this browser context');
+      this.toast(t('Copy is not available in this browser context'));
     }
   }
 
   protected stageText(p: Pending): string {
     switch (p.stage) {
       case 'planning':
-        return 'Planning the research…';
+        return t('Planning the research…');
       case 'researching':
-        return p.step ? `Searching ${p.step.n} of ${p.step.of}: ${p.step.question}` : 'Searching…';
+        return p.step
+          ? t('Searching {n} of {of}: {question}', {
+              n: p.step.n,
+              of: p.step.of,
+              question: p.step.question,
+            })
+          : t('Searching…');
       case 'retrieving':
-        return 'Searching the sources…';
+        return t('Searching the sources…');
       default:
-        return `Reading ${p.context.length} passages…`;
+        return t('Reading {n} passages…', { n: p.context.length });
     }
   }
 
@@ -753,11 +778,15 @@ export class ChatPanelComponent {
     const c = m.checks ?? {};
     if (c.uncited_sentences)
       out.push(
-        `${c.uncited_sentences} ${c.uncited_sentences === 1 ? 'sentence has' : 'sentences have'} no citation`,
+        c.uncited_sentences === 1
+          ? t('1 sentence has no citation')
+          : t('{n} sentences have no citation', { n: c.uncited_sentences }),
       );
     if (c.invalid_citations?.length)
       out.push(
-        `Removed citations to passages that were not provided: ${c.invalid_citations.join(', ')}`,
+        t('Removed citations to passages that were not provided: {list}', {
+          list: c.invalid_citations.join(', '),
+        }),
       );
     for (const w of c.warnings ?? []) out.push(w);
     return out;
@@ -769,7 +798,11 @@ export class ChatPanelComponent {
 
   protected attemptsText(attempts: Attempt[]): string {
     return attempts
-      .map((a) => (a.error ? `${a.model}: failed (${a.error})` : `${a.model}: answered`))
+      .map((a) =>
+        a.error
+          ? t('{model}: failed ({error})', { model: a.model, error: a.error })
+          : t('{model}: answered', { model: a.model }),
+      )
       .join('\n');
   }
 
@@ -783,6 +816,6 @@ export class ChatPanelComponent {
   }
 
   private toast(message: string): void {
-    this.snack.open(message, 'Close', { duration: 4000 });
+    this.snack.open(message, t('Close'), { duration: 4000 });
   }
 }

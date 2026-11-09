@@ -47,6 +47,7 @@ Ship them to a central store with your usual Docker logging driver if needed.
 ## Traces
 
 With `OTEL_EXPORTER_OTLP_ENDPOINT` set, spans cover incoming HTTP requests (FastAPI), outgoing HTTP (model
-providers, Qdrant, web fetches) and Celery tasks. Database spans are not recorded yet (the SQLAlchemy
-instrumentation does not support SQLAlchemy 2.1). Any OTLP/HTTP backend works; Jaeger keeps traces in memory
-(they are lost on restart).
+providers, Qdrant, web fetches), Celery tasks and database statements. Database spans come from SQLAlchemy cursor
+events (the upstream OpenTelemetry instrumentation does not support SQLAlchemy 2.1): each span is named after the
+operation and the first table (`SELECT sources`) and never contains SQL text or bound parameters. Any OTLP/HTTP
+backend works; Jaeger keeps traces in memory (they are lost on restart).

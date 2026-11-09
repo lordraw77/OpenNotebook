@@ -305,3 +305,32 @@ async def test_project_graph_rebuild(client, admin_headers, session, kg, jobs):
         "WPA3",
         "Access point",
     }
+
+
+def test_expansion_prefers_the_bridge_between_relevant_entities() -> None:
+    """Parallel chains project -> lead -> system: the bridge of the asked chain must win.
+
+    Retrieved (in rank order): the project passage (project P0 and lead L0), then the system passages of
+    every chain (S0..S2). The bridge passages "Lk operates Sk" are candidates; B0 links two seeds of the top
+    passages, B1/B2 hang off lower-ranked systems and pull in their leads' other passages.
+    """
+    import uuid
+
+    from opennotebook.graph.query import score_expansion
+
+    ids = {name: uuid.uuid5(uuid.NAMESPACE_DNS, name) for name in ("P0 L0 S0 S1 S2 L1 L2".split())}
+    chunks = {name: uuid.uuid5(uuid.NAMESPACE_URL, name) for name in ("A0 B0 B1 B2 A1 A2".split())}
+    # rank 0: A0 (P0, L0); rank 1..3: system passages of chains 0..2
+    seed_weight = {ids["P0"]: 1.0, ids["L0"]: 1.0, ids["S0"]: 1 / 2, ids["S1"]: 1 / 3, ids["S2"]: 1 / 4}
+    relations = [
+        (ids["L0"], ids["P0"], chunks["A0"]),  # already retrieved
+        (ids["L0"], ids["S0"], chunks["B0"]),  # the bridge of the asked chain
+        (ids["L1"], ids["S1"], chunks["B1"]),
+        (ids["L2"], ids["S2"], chunks["B2"]),
+    ]
+    neighbour_chunks = {ids["L1"]: [chunks["B1"], chunks["A1"]], ids["L2"]: [chunks["B2"], chunks["A2"]]}
+    score = score_expansion(seed_weight, relations, neighbour_chunks)
+    ranked = sorted(score, key=lambda c: -score[c])
+    assert ranked[1] == chunks["B0"]  # first after the already retrieved A0, which the caller drops
+    assert score[chunks["B0"]] > score[chunks["B1"]] > score[chunks["B2"]]
+    # an unweighted count (old behaviour) would rank B1 and B2 (evidence + neighbour mention) above B0

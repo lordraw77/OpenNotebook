@@ -79,7 +79,32 @@ Open `http://<host>:8080`, sign in with the bootstrap administrator, then:
 3. **Workbench**: create a project, upload sources, ask questions; **Wiki** for the knowledge graph.
 
 Optional profiles: `docker compose --profile observability up -d` (Prometheus on `127.0.0.1:9090`, Grafana on
-`127.0.0.1:3000`), `--profile auth` (Keycloak on `127.0.0.1:8081`), or `COMPOSE_PROFILES=…` in `.env`.
+`127.0.0.1:3000`), `--profile auth` (Keycloak on `127.0.0.1:8081`), `--profile converter` (office documents to
+PDF; also set `CONVERTER_URL=http://converter:8080`), or `COMPOSE_PROFILES=…` in `.env`.
+
+### Kubernetes (Helm)
+
+`deploy/helm/opennotebook` installs the same stack on Kubernetes: web, api, worker, a migration Job (`migrate` +
+`bootstrap` at every install or upgrade, with `wait-migrations` init containers on the api and worker),
+optional converter, and single-replica PostgreSQL, Qdrant, SeaweedFS and Redis StatefulSets.
+
+```bash
+helm install on deploy/helm/opennotebook -n opennotebook --create-namespace \
+  --set config.APP_PUBLIC_URL=https://notes.example.com --set ingress.enabled=true --set ingress.host=notes.example.com \
+  --set providerKeys.GROQ_API_KEY=... --set providerKeys.MISTRAL_API_KEY=...
+kubectl get secret on-opennotebook-secrets -n opennotebook -o jsonpath='{.data.BOOTSTRAP_ADMIN_PASSWORD}' | base64 -d
+```
+
+- Secrets are generated at first install and kept across upgrades and `helm uninstall` (`resource-policy: keep`,
+  they protect the data); or pass `existingSecret` (keys of `values.yaml`). Back up the Secret with the database.
+- For production use managed data services: `postgresql.enabled=false` and `external.postgresql.*`, likewise
+  `qdrant`, `redis`, `seaweedfs` (any S3 store, `external.s3.*`).
+- NetworkPolicies mirror the Compose networks: data services accept the api, worker and migration pods only; the
+  converter accepts the worker only and has no egress. They need a CNI that enforces them.
+- Ingress: the chat is an event stream; disable proxy buffering and allow long reads and 500 MB bodies (annotations
+  in `values.yaml`). Pods run non-root with a read-only root filesystem and no capabilities.
+- Validated in CI with `helm lint` and kubeconform (Kubernetes 1.33). It has not been installed on a live
+  cluster yet: try it on a test cluster first.
 
 ## 5. TLS and reverse proxy
 

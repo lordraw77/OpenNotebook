@@ -1,0 +1,14 @@
+OpenNotebook {{ .Chart.AppVersion }} installed as "{{ .Release.Name }}".
+
+First administrator: {{ .Values.config.BOOTSTRAP_ADMIN_EMAIL }}
+  password: kubectl get secret {{ include "on.secretName" . }} -n {{ .Release.Namespace }} -o jsonpath='{.data.BOOTSTRAP_ADMIN_PASSWORD}' | base64 -d
+
+{{- if .Values.ingress.enabled }}
+
+Open https://{{ .Values.ingress.host }} (set config.APP_PUBLIC_URL to that address).
+{{- else }}
+
+Without an ingress: kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "on.fullname" . }}-web 8080:{{ .Values.web.service.port }}
+{{- end }}
+
+Add model provider keys (Settings -> Providers, or --set providerKeys.GROQ_API_KEY=...). No model runs in the cluster.

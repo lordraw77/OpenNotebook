@@ -19,6 +19,7 @@ import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
 
 import { errorMessage } from '../../core/api.service';
 import { Citation, SourcesApi, citationLocation } from '../../core/sources.api';
+import { TranslatePipe, t } from '../../core/i18n';
 
 interface Box {
   left: number;
@@ -40,14 +41,14 @@ async function loadPdfJs() {
  */
 @Component({
   selector: 'app-source-viewer',
-  imports: [MatButtonModule, MatIconModule, MatProgressBarModule, MatTooltipModule],
+  imports: [TranslatePipe, MatButtonModule, MatIconModule, MatProgressBarModule, MatTooltipModule],
   template: `
     @let c = citation();
     <header class="head">
       <button
         mat-icon-button
-        aria-label="Back to the chat"
-        matTooltip="Back"
+        [attr.aria-label]="'Back to the chat' | t"
+        [matTooltip]="'Back' | t"
         (click)="closed.emit()"
       >
         <mat-icon>arrow_back</mat-icon>
@@ -68,7 +69,7 @@ async function loadPdfJs() {
       @if (isPdf() && pageCount()) {
         <button
           mat-icon-button
-          aria-label="Previous page"
+          [attr.aria-label]="'Previous page' | t"
           [disabled]="page() <= 1"
           (click)="page.set(page() - 1)"
         >
@@ -77,7 +78,7 @@ async function loadPdfJs() {
         <span class="pager">{{ page() }} / {{ pageCount() }}</span>
         <button
           mat-icon-button
-          aria-label="Next page"
+          [attr.aria-label]="'Next page' | t"
           [disabled]="page() >= pageCount()"
           (click)="page.set(page() + 1)"
         >
@@ -86,8 +87,8 @@ async function loadPdfJs() {
       }
       <button
         mat-icon-button
-        matTooltip="Source details"
-        aria-label="Source details"
+        [matTooltip]="'Source details' | t"
+        [attr.aria-label]="'Source details' | t"
         (click)="details.emit(c.source_id)"
       >
         <mat-icon>info</mat-icon>
@@ -304,7 +305,7 @@ export class SourceViewerComponent {
         setTimeout(() => this.markEl()?.nativeElement.scrollIntoView({ block: 'center' }));
       }
     } catch (err) {
-      this.error.set(`Could not open the source: ${errorMessage(err)}`);
+      this.error.set(t('Could not open the source: {error}', { error: errorMessage(err) }));
     } finally {
       this.loading.set(false);
     }

@@ -24,6 +24,7 @@ import {
   ProviderModel,
 } from '../../core/api.models';
 import { ApiService, errorMessage } from '../../core/api.service';
+import { TranslatePipe, t } from '../../core/i18n';
 
 interface NewProvider {
   kind: string;
@@ -37,6 +38,7 @@ interface NewProvider {
 @Component({
   selector: 'app-providers',
   imports: [
+    TranslatePipe,
     DatePipe,
     FormsModule,
     MatCardModule,
@@ -191,14 +193,19 @@ export class ProvidersComponent {
       await this.load();
       await this.select(p);
       await this.sync(p);
-    }, 'Provider added');
+    }, t('Provider added'));
   }
 
   async sync(p: Provider): Promise<void> {
     await this.task(async () => {
       const r = await this.api.syncProvider(p.id);
       this.toast(
-        `${p.name}: ${r.discovered} models (${r.added} new, ${r.unavailable} no longer listed)`,
+        t('{name}: {n} models ({added} new, {gone} no longer listed)', {
+          name: p.name,
+          n: r.discovered,
+          added: r.added,
+          gone: r.unavailable,
+        }),
       );
       await this.load();
     });
@@ -207,7 +214,7 @@ export class ProvidersComponent {
   async setEnabled(p: Provider, enabled: boolean): Promise<void> {
     await this.task(
       () => this.api.updateProvider(p.id, { enabled }).then(() => this.load()),
-      enabled ? 'Enabled' : 'Disabled',
+      enabled ? t('Enabled') : t('Disabled'),
     );
   }
 
@@ -216,11 +223,11 @@ export class ProvidersComponent {
       await this.api.updateProvider(p.id, { api_key: this.newKey });
       this.newKey = '';
       await this.load();
-    }, 'API key updated');
+    }, t('API key updated'));
   }
 
   async remove(p: Provider): Promise<void> {
-    if (!confirm(`Remove provider “${p.name}” and its model catalog?`)) return;
+    if (!confirm(t('Remove provider “{name}” and its model catalog?', { name: p.name }))) return;
     await this.task(async () => {
       await this.api.deleteProvider(p.id);
       if (this.selectedId() === p.id) {
@@ -228,7 +235,7 @@ export class ProvidersComponent {
         this.models.set([]);
       }
       await this.load();
-    }, 'Provider removed');
+    }, t('Provider removed'));
   }
 
   async toggleModel(m: ProviderModel, enabled: boolean): Promise<void> {
@@ -258,7 +265,7 @@ export class ProvidersComponent {
       });
       this.manualModel = '';
       await this.load();
-    }, 'Model added');
+    }, t('Model added'));
   }
 
   async test(m: ProviderModel): Promise<void> {
@@ -293,6 +300,6 @@ export class ProvidersComponent {
   }
 
   private toast(msg: string): void {
-    this.snack.open(msg, 'Close', { duration: 5000 });
+    this.snack.open(msg, t('Close'), { duration: 5000 });
   }
 }

@@ -27,6 +27,8 @@ a citation highlights the exact passage.
 | Model catalog sync with capability detection, per-model test, encrypted keys | ✅ M0 |
 | Model selection per phase with fallback chains; per-project overrides; chat model selector | ✅ M0 |
 | Light and dark theme (follows the system, or chosen from the top bar); responsive header | ✅ M1 |
+| Helm chart for Kubernetes (`deploy/helm`) | ✅ |
+| English and Italian interface (browser language by default, switch in the top bar) | ✅ |
 | Ingestion of PDF, TXT, Markdown, DOCX and notes; structure-aware chunking; embeddings per project; hybrid search with ACL pre-filter | ✅ M1 |
 | Grounded chat: streaming answers, strict prompt, validated clickable citations, provider fallback, optional rerank, conversations, save answer as note | ✅ M2 |
 | Source viewer: PDF page with the cited passage highlighted (pdf.js), text sources with the passage marked | ✅ M2 |
@@ -45,6 +47,8 @@ a citation highlights the exact passage.
 | Observability: Prometheus metrics (api + worker), Grafana dashboard, alert rules, OpenTelemetry traces (Jaeger) | ✅ M6 |
 | Operations: backup/restore, consistency check, encryption key rotation, SLOs, runbooks, RAG evaluation set, load test | ✅ M6 |
 | Hardening: per-user rate limits, memory/PID limits, image OS updates, dependency/image scanning and SBOM in CI | ✅ M6 |
+| Office documents (PPTX, XLSX, ODF, DOC/XLS/PPT, RTF; DOCX with page numbers) through an isolated LibreOffice converter (`converter` profile) | ✅ |
+| Lazy, paginated source tree for very large notebooks; database spans in traces | ✅ |
 
 ## No models inside
 
@@ -139,11 +143,16 @@ make lint                               # ruff + prettier
 make fmt                                # format everything
 ```
 
+UI texts are English in the templates and marked for translation: `{{ 'Upload sources' | t }}`, or `t('…')` in
+code, with `{name}` placeholders. Add the Italian text to `frontend/src/app/i18n/it.ts`;
+`node scripts/check-i18n.mjs` (also run in CI) lists marked texts without a translation.
+
 ## Repository layout
 
 ```
 backend/     FastAPI API, Celery worker, model gateway, Alembic migrations, tests
 frontend/    Angular 22 + Angular Material web app, nginx config
+converter/   optional isolated office-to-PDF converter (headless LibreOffice)
 deploy/      Docker Compose: production/ (published images) and compose/ (build from source), observability config
 scripts/     secrets, tests, image checks, release bundle, Docker Hub publishing, backup/restore, load test, RAG evaluation
 eval/        fixed corpus and questions for the RAG quality evaluation
