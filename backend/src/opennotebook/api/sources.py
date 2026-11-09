@@ -25,6 +25,7 @@ from opennotebook.models import (
     TERMINAL_STATUSES,
     Chunk,
     GrantRole,
+    Secret,
     Source,
     SourceBlob,
     SourceKind,
@@ -79,9 +80,11 @@ class SourceOut(BaseModel):
             meta = value.metadata_ or {}
             details = {
                 k: meta[k]
-                for k in ("archive", "final_url", "content_type", "fetched_at", "crawl", "rendition")
+                for k in ("archive", "final_url", "content_type", "fetched_at", "crawl", "rendition", "git")
                 if k in meta
             }
+            if "git" in details:  # the token itself is never returned
+                details["git"] = {**details["git"], "token_set": bool(meta.get("git_secret_id"))}
             return {
                 **{c: getattr(value, c) for c in cls.model_fields if c != "details" and hasattr(value, c)},
                 "details": details,
@@ -301,6 +304,162 @@ async def add_web_pages(
     ]
 
 
+class GitIn(BaseModel):
+    url: str = Field(min_length=8, max_length=500)
+    branch: str | None = Field(default=None, max_length=200)
+    # access token (GitLab personal / project / deploy token); stored encrypted, never shown again
+    token: str | None = Field(default=None, max_length=500)
+    username: str | None = Field(default=None, max_length=100)
+    # 0 = only when asked ("Sync now"); otherwise the worker syncs when this many minutes have passed
+    sync_interval_minutes: int = Field(default=0, ge=0, le=60 * 24 * 30)
+    exclude: list[str] = Field(default_factory=list, max_length=100)
+    include: list[str] = Field(default_factory=list, max_length=100)
+
+
+class GitUpdate(BaseModel):
+    branch: str | None = Field(default=None, max_length=200)
+    token: str | None = Field(default=None, max_length=500)  # replaces the stored token; "" removes it
+    username: str | None = Field(default=None, max_length=100)
+    sync_interval_minutes: int | None = Field(default=None, ge=0, le=60 * 24 * 30)
+    exclude: list[str] | None = Field(default=None, max_length=100)
+    include: list[str] | None = Field(default=None, max_length=100)
+
+
+def _globs(values: list[str]) -> list[str]:
+    return [v.strip()[:200] for v in values if v.strip()]
+
+
+@router.post("/nodes/{notebook_id}/git", response_model=SourceOut, status_code=201)
+async def add_git_repository(
+    notebook_id: uuid.UUID, body: GitIn, user: CurrentUser, session: SessionDep
+) -> Source:
+    """Add a git repository (http/https, host allow-listed): the worker clones it and indexes each file."""
+    from opennotebook.ingestion import git as gitsrc
+    from opennotebook.providers.service import store_secret
+
+    notebook, _ = await get_node_for(session, user, notebook_id, GrantRole.editor)
+    try:
+        url = gitsrc.validate_url(body.url)
+        branch = gitsrc.validate_branch(body.branch)
+    except gitsrc.GitError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    digest = gitsrc.digest(url, branch)
+    if await session.scalar(
+        select(Source.id).where(
+            Source.notebook_id == notebook.id, Source.content_sha256 == digest, Source.deleted_at.is_(None)
+        )
+    ):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "This repository and branch are already in the notebook"
+        )
+    meta: dict = {
+        "git": {
+            "url": url,
+            "branch": branch,
+            "username": (body.username or "").strip() or None,
+            "sync_interval_minutes": body.sync_interval_minutes,
+            "exclude": _globs(body.exclude),
+            "include": _globs(body.include),
+        },
+        "format": "git",
+    }
+    if body.token:
+        secret = await store_secret(session, body.token)
+        meta["git_secret_id"] = str(secret.id)
+    source = Source(
+        id=uuid.uuid4(),
+        notebook_id=notebook.id,
+        kind=SourceKind.archive,
+        title=url.split("://", 1)[1][:500],
+        original_path=url,
+        uri=url,
+        mime_type="application/x-git-repository",
+        content_sha256=digest,
+        size_bytes=0,
+        status=SourceStatus.queued,
+        created_by=user.id,
+        warnings=[],
+        metadata_=meta,
+    )
+    session.add(source)
+    audit(session, user, "source.git", "source", source.id, url=url, branch=branch)
+    await session.commit()
+    await session.refresh(source)
+    queue.enqueue_ingestion(source.id, "git")
+    return source
+
+
+async def _git_source(session, user, source_id: uuid.UUID) -> Source:  # type: ignore[no-untyped-def]
+    source = await _source_for(session, user, source_id, GrantRole.editor)
+    if not (source.metadata_ or {}).get("git"):
+        raise HTTPException(status.HTTP_409_CONFLICT, "This source is not a git repository")
+    return source
+
+
+@router.patch("/sources/{source_id}/git", response_model=SourceOut)
+async def update_git_repository(
+    source_id: uuid.UUID, body: GitUpdate, user: CurrentUser, session: SessionDep
+) -> Source:
+    """Change schedule, branch, filters or token. Branch and filter changes take effect at the next sync."""
+    from opennotebook.ingestion import git as gitsrc
+    from opennotebook.providers.service import store_secret
+
+    source = await _git_source(session, user, source_id)
+    meta = dict(source.metadata_ or {})
+    git = dict(meta["git"])
+    fields = body.model_fields_set
+    if "branch" in fields:
+        try:
+            git["branch"] = gitsrc.validate_branch(body.branch)
+        except gitsrc.GitError as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+        digest = gitsrc.digest(git["url"], git["branch"])
+        if digest != source.content_sha256:
+            if await session.scalar(
+                select(Source.id).where(
+                    Source.notebook_id == source.notebook_id,
+                    Source.content_sha256 == digest,
+                    Source.deleted_at.is_(None),
+                )
+            ):
+                raise HTTPException(status.HTTP_409_CONFLICT, "That branch is already in the notebook")
+            source.content_sha256 = digest
+    if body.sync_interval_minutes is not None:
+        git["sync_interval_minutes"] = body.sync_interval_minutes
+    if body.exclude is not None:
+        git["exclude"] = _globs(body.exclude)
+    if body.include is not None:
+        git["include"] = _globs(body.include)
+    if "username" in fields:
+        git["username"] = (body.username or "").strip() or None
+    if "token" in fields:
+        old = meta.pop("git_secret_id", None)
+        if old and (previous := await session.get(Secret, uuid.UUID(old))):
+            await session.delete(previous)
+        if body.token:
+            meta["git_secret_id"] = str((await store_secret(session, body.token)).id)
+    meta["git"] = git
+    source.metadata_ = meta
+    audit(session, user, "source.git.update", "source", source.id)
+    await session.commit()
+    await session.refresh(source)
+    return source
+
+
+@router.post("/sources/{source_id}/sync", response_model=SourceOut)
+async def sync_git_repository(source_id: uuid.UUID, user: CurrentUser, session: SessionDep) -> Source:
+    """Sync now: fetch the branch and index what changed."""
+    source = await _git_source(session, user, source_id)
+    if source.status not in (SourceStatus.ready, SourceStatus.failed):
+        raise HTTPException(status.HTTP_409_CONFLICT, "A sync is already in progress")
+    source.status = SourceStatus.queued
+    source.error = None
+    await session.commit()
+    await session.refresh(source)
+    queue.enqueue_ingestion(source.id, "sync")
+    return source
+
+
 class SourceCounts(BaseModel):
     # top-level sources (archive members and crawled pages excluded) directly in each node
     nodes: dict[uuid.UUID, int]
@@ -427,6 +586,9 @@ async def delete_source(source_id: uuid.UUID, user: CurrentUser, session: Sessio
     source.deleted_at = now
     for child in children:
         child.deleted_at = now
+    secret_id = (source.metadata_ or {}).get("git_secret_id")
+    if secret_id and (secret := await session.get(Secret, uuid.UUID(secret_id))):
+        await session.delete(secret)
     audit(session, user, "source.delete", "source", source.id, title=source.title, children=len(children))
     await session.commit()
     for s in [source, *children]:

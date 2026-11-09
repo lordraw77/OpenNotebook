@@ -33,8 +33,17 @@ import { TranslatePipe, t } from '../../core/i18n';
 
 interface Pending {
   question: string;
-  stage: 'retrieving' | 'generating' | 'answering' | 'planning' | 'researching';
+  stage:
+    | 'retrieving'
+    | 'generating'
+    | 'answering'
+    | 'planning'
+    | 'researching'
+    | 'rewriting'
+    | 'reflecting';
   plan: string[];
+  /** The standalone query written for a follow-up question. */
+  query: string | null;
   step: { n: number; of: number; question: string } | null;
   context: Citation[];
   content: string;
@@ -131,6 +140,12 @@ export interface NotebookOption {
           <div class="q">{{ m.content }}</div>
         } @else {
           <article class="a" [class.failed]="m.status === 'error'">
+            @if (m.checks.rewritten_query) {
+              <div class="muted rewritten">
+                <mat-icon inline>manage_search</mat-icon>
+                {{ 'Searched for: {query}' | t: { query: m.checks.rewritten_query } }}
+              </div>
+            }
             @if (m.checks.mode === 'research') {
               <details class="research">
                 <summary>
@@ -252,6 +267,12 @@ export interface NotebookOption {
                 </li>
               }
             </ol>
+          }
+          @if (p.query) {
+            <div class="muted rewritten">
+              <mat-icon inline>manage_search</mat-icon>
+              {{ 'Searching for: {query}' | t: { query: p.query } }}
+            </div>
           }
           @if (p.stage !== 'answering') {
             <div class="stage muted">
@@ -458,6 +479,10 @@ export interface NotebookOption {
     .small {
       font-size: 12px;
     }
+    .rewritten {
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
     .plan {
       margin: 4px 0 8px;
       padding-left: 20px;
@@ -508,6 +533,8 @@ export class ChatPanelComponent {
   readonly notebooks = input<NotebookOption[]>([]);
   /** Question to ask right away (e.g. a suggested question); a new nonce asks again. */
   readonly askRequest = input<{ text: string; nonce: number } | null>(null);
+  /** A conversation to open (from the history); the scope is the one the workbench shows. */
+  readonly conversation = input<string | null>(null);
   readonly openCitation = output<Citation>();
   readonly noteSaved = output<void>();
 
@@ -567,7 +594,9 @@ export class ChatPanelComponent {
       const list = await this.api.list(scope);
       if (this.scopeId() !== scope) return;
       this.conversations.set(list);
-      if (list.length) await this.openConversation(list[0].id);
+      const wanted = this.conversation();
+      if (wanted && list.some((c) => c.id === wanted)) await this.openConversation(wanted);
+      else if (list.length) await this.openConversation(list[0].id);
     } catch (err) {
       this.error.set(errorMessage(err));
     }
@@ -605,6 +634,7 @@ export class ChatPanelComponent {
     this.pending.set({
       question,
       plan: [],
+      query: null,
       step: null,
       stage: this.research() ? 'planning' : 'retrieving',
       context: [],
@@ -663,6 +693,9 @@ export class ChatPanelComponent {
         break;
       case 'plan':
         this.pending.set({ ...p, plan: e.data.sub_questions });
+        break;
+      case 'query':
+        this.pending.set({ ...p, query: e.data.text });
         break;
       case 'sources':
         this.pending.set({ ...p, context: e.data.context });
@@ -758,6 +791,10 @@ export class ChatPanelComponent {
     switch (p.stage) {
       case 'planning':
         return t('Planning the research…');
+      case 'rewriting':
+        return t('Reading the conversation to understand the question…');
+      case 'reflecting':
+        return t('Checking what is still missing…');
       case 'researching':
         return p.step
           ? t('Searching {n} of {of}: {question}', {

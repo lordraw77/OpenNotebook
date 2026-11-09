@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -12,7 +13,7 @@ from opennotebook.config import get_settings
 from opennotebook.ingestion.pipeline import node_ids_from_path
 from opennotebook.ingestion.search import SearchHit, search_scope
 from opennotebook.ingestion.vectors import VectorIndex
-from opennotebook.models import Node, User
+from opennotebook.models import ModelPhase, Node, User
 from opennotebook.providers.gateway import GatewayError, ModelGateway
 
 log = logging.getLogger(__name__)
@@ -29,10 +30,68 @@ class Retrieved:
 
 
 def retrieval_query(question: str, previous_questions: list[str]) -> str:
-    """Short follow-ups ("and the second one?") are searched together with the previous question."""
+    """Fallback without a model rewrite: short follow-ups are searched with the previous question."""
     if previous_questions and len(question.split()) < 8:
         return f"{previous_questions[-1]}\n{question}"
     return question
+
+
+REWRITE_PROMPT = """Rewrite the last question of this conversation as one standalone search query that can be
+understood without the conversation. Resolve pronouns and references ("it", "the second one", "and for the
+other case?"), keep names, codes and numbers exactly, and keep the language of the question. If the
+question is already standalone, repeat it unchanged. Reply with the query only: no quotes, no explanation,
+no answer.
+
+Conversation:
+{history}
+
+Last question: {question}"""
+
+
+def clean_rewrite(reply: str, question: str) -> str | None:
+    """The rewritten query, or None when the reply is unusable (empty, an essay, or a refusal to rewrite)."""
+    text = " ".join((reply or "").strip().strip("\"'`").split())
+    if text.lower().startswith(("query:", "standalone query:")):
+        text = text.split(":", 1)[1].strip()
+    if not text or len(text) > max(300, 4 * len(question)):
+        return None
+    return text
+
+
+async def rewrite_question(
+    gateway: ModelGateway,
+    question: str,
+    turns: list[tuple[str, str]],
+    project_id: uuid.UUID,
+    model_id: uuid.UUID | None,
+) -> tuple[str | None, str | None]:
+    """A model turns a follow-up ("and the second one?") into a standalone query using the recent turns.
+
+    Returns (query, model label); (None, None) when there is nothing to resolve or the call fails, in which
+    case the caller falls back to `retrieval_query`.
+    """
+    if not turns:
+        return None, None
+    history = "\n".join(f"{role}: {' '.join(text.split())[:400]}" for role, text in turns[-4:])
+    try:
+        result = await asyncio.wait_for(
+            gateway.complete(
+                ModelPhase.chat,
+                [{"role": "user", "content": REWRITE_PROMPT.format(history=history, question=question)}],
+                project_id,
+                selected_model_id=model_id,
+                max_tokens=200,
+            ),
+            get_settings().chat_rewrite_timeout_s,
+        )
+    except Exception as exc:  # noqa: BLE001 - a failed rewrite must never fail the answer
+        log.warning("follow-up rewrite failed, using the previous question instead: %s", exc)
+        return None, None
+    try:
+        rewritten = clean_rewrite(result.value.choices[0].message.content or "", question)
+    except (AttributeError, IndexError, TypeError):
+        return None, None
+    return (rewritten, result.used.label) if rewritten else (None, None)
 
 
 def diversify(hits: list[SearchHit], limit: int, max_per_source: int) -> list[SearchHit]:

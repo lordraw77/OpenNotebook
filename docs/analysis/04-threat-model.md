@@ -53,6 +53,13 @@ Every model call crosses boundary 4 or 5: no model runs inside the stack (ADR-00
   A compromised converter can only return a malicious PDF, which pdfplumber then parses under the worker's limits.
   Residual: the deterministic parsers (pdfplumber, python-docx, Pillow, tree-sitter) still run inside the worker,
   which has egress; moving them to a network-less parsing worker remains possible future work.
+- **Git sources (SSRF, malicious repositories)**: `ingestion/git.py`. Only `http`/`https`, no credentials in the
+  URL, and the host (and port) must be listed in `GIT_ALLOWED_HOSTS` (empty = off), checked when the source is
+  added and at every sync; git runs with `GIT_ALLOW_PROTOCOL=http:https`, no hooks, no submodules, no
+  redirects, no prompts, no system or user configuration, symlinks neither created nor read, a time limit and
+  limits on the number and size of the files read. The access token is stored encrypted (like provider keys),
+  passed to git as an HTTP header through the process environment (never in the command line) and removed from
+  error messages. Residual: git connects by itself, so a DNS answer for an allow-listed name is trusted.
 - **T6 (SSRF)**: implemented in `ingestion/web.py`: http(s) only, no credentials, all resolved addresses must be
   public (loopback, private, link-local incl. `169.254.169.254`, multicast, reserved, IPv4-mapped refused), the
   connected peer is re-checked (DNS rebinding), redirects re-validated hop by hop, size/time limits, no environment

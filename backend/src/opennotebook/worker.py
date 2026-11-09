@@ -36,6 +36,15 @@ celery_app.conf.update(
     task_serializer="json",
     accept_content=["json"],
 )
+if settings.git_sync_scheduler:
+    # beat runs inside the worker (`opennotebook worker`); several workers are fine, the task is idempotent
+    celery_app.conf.beat_schedule = {
+        "git-sync-due": {
+            "task": "opennotebook.git_sync_due",
+            "schedule": 60.0,
+            "options": {"queue": "default"},
+        }
+    }
 
 
 @worker_process_init.connect
@@ -100,6 +109,20 @@ def ingest_source_task(self, source_id: str, reason: str = "upload") -> str:  # 
             run(give_up())
             return "failed"
         raise self.retry(exc=exc, countdown=min(600, 30 * 2**self.request.retries)) from exc
+
+
+@celery_app.task(name="opennotebook.git_sync_due")
+def git_sync_due_task() -> int:
+    """Queue the git repositories whose schedule is due."""
+    from opennotebook.ingestion.git import enqueue_due
+
+    sessionmaker, _, _ = _deps()
+
+    async def go() -> int:
+        async with sessionmaker() as session:
+            return await enqueue_due(session)
+
+    return run(go())
 
 
 @celery_app.task(name="opennotebook.purge_source")

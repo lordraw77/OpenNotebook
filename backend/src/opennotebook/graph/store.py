@@ -10,7 +10,7 @@ from sqlalchemy import delete, exists, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from opennotebook.models import Entity, EntityMention, Relation, WikiPage
+from opennotebook.models import Entity, EntityMention, Relation, RelationBlock, WikiPage
 
 ENTITY_TYPES = (
     "person",
@@ -57,7 +57,8 @@ class GraphWriter:
     def __init__(self, session: AsyncSession, project_id: uuid.UUID) -> None:
         self.session = session
         self.project_id = project_id
-        self._ids: dict[str, uuid.UUID] = {}
+        self._ids: dict[str, uuid.UUID | None] = {}
+        self._blocked: set[tuple[uuid.UUID, uuid.UUID, str]] | None = None
 
     async def entity(self, name: str, type_: str, key: str | None = None) -> uuid.UUID | None:
         name = display_name(name)
@@ -73,10 +74,16 @@ class GraphWriter:
             )
             .on_conflict_do_nothing(constraint="uq_entities_project_canonical")
         )
-        entity_id = await self.session.scalar(
-            select(Entity.id).where(Entity.project_id == self.project_id, Entity.canonical == key)
-        )
-        self._ids[key] = entity_id  # type: ignore[assignment]
+        row = (
+            await self.session.execute(
+                select(Entity.id, Entity.hidden, Entity.merged_into).where(
+                    Entity.project_id == self.project_id, Entity.canonical == key
+                )
+            )
+        ).one()
+        # a person deleted this entity (skip it) or merged it into another (follow the merge)
+        entity_id = None if row.hidden else (row.merged_into or row.id)
+        self._ids[key] = entity_id
         return entity_id
 
     async def mention(
@@ -110,7 +117,19 @@ class GraphWriter:
     ) -> None:
         if src == dst:
             return
+        if self._blocked is None:
+            self._blocked = set(
+                (
+                    await self.session.execute(
+                        select(RelationBlock.src_id, RelationBlock.dst_id, RelationBlock.type).where(
+                            RelationBlock.project_id == self.project_id
+                        )
+                    )
+                ).all()
+            )
         rel_type = re.sub(r"[^a-z0-9_ ]", "", (type_ or "related_to").lower()).strip().replace(" ", "_")[:60]
+        if (src, dst, rel_type or "related_to") in self._blocked:
+            return
         self.session.add(
             Relation(
                 project_id=self.project_id,
@@ -141,6 +160,8 @@ async def drop_orphans(session: AsyncSession, project_id: uuid.UUID) -> None:
     await session.execute(
         delete(Entity).where(
             Entity.project_id == project_id,
+            Entity.hidden.is_(False),
+            Entity.merged_into.is_(None),
             ~exists().where(EntityMention.entity_id == Entity.id),
             ~exists().where(Relation.src_id == Entity.id),
             ~exists().where(Relation.dst_id == Entity.id),

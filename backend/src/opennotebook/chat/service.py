@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from opennotebook.acl import get_search_scope
 from opennotebook.chat.citations import NOT_FOUND, normalize, strip_markers
 from opennotebook.chat.prompt import ContextPassage, build_messages
-from opennotebook.chat.retrieval import retrieval_query, retrieve
+from opennotebook.chat.retrieval import retrieval_query, retrieve, rewrite_question
 from opennotebook.config import get_settings
 from opennotebook.db import get_sessionmaker
 from opennotebook.ingestion.pipeline import node_ids_from_path
@@ -150,11 +150,25 @@ async def answer_stream(
                 for m in previous
                 if m.status == "complete" and m.content
             ]
-            query = retrieval_query(question, [m.content for m in previous if m.role == "user"])
             project_id = uuid.UUID(node_ids_from_path(scope.path)[0])
+            rewritten: str | None = None
+            if settings.chat_rewrite_followups and history:
+                yield sse("status", {"stage": "rewriting"})
+                rewritten, rewriter = await rewrite_question(
+                    ModelGateway(session),
+                    question,
+                    [(h["role"], h["content"]) for h in history],
+                    project_id,
+                    model_id,
+                )
+                if rewritten and rewritten.casefold() != question.strip().casefold():
+                    yield sse("query", {"text": rewritten, "model": rewriter})
+                else:
+                    rewritten = None
+            query = rewritten or retrieval_query(question, [m.content for m in previous if m.role == "user"])
             research_plan: list[str] | None = None
             if mode == "research":
-                from opennotebook.chat.research import gather, plan
+                from opennotebook.chat.research import extend, gather, plan, reflect
 
                 yield sse("status", {"stage": "planning"})
                 subs, planner = await plan(ModelGateway(session), query, project_id, model_id)
@@ -165,7 +179,26 @@ async def answer_stream(
                         "status",
                         {"stage": "researching", "step": i + 1, "of": len(research_plan), "question": sub},
                     )
-                retrieved = await gather(session, get_vector_index(), user, scope, research_plan)
+                index = get_vector_index()
+                retrieved = await gather(session, index, user, scope, research_plan)
+                for round_no in range(1, settings.research_max_rounds + 1):
+                    yield sse("status", {"stage": "reflecting", "round": round_no})
+                    follow_ups = await reflect(ModelGateway(session), query, retrieved, project_id, model_id)
+                    if not follow_ups:
+                        break
+                    research_plan = [*research_plan, *follow_ups]
+                    yield sse("plan", {"sub_questions": research_plan, "round": round_no})
+                    for i, sub in enumerate(follow_ups):
+                        yield sse(
+                            "status",
+                            {
+                                "stage": "researching",
+                                "step": len(research_plan) - len(follow_ups) + i + 1,
+                                "of": len(research_plan),
+                                "question": sub,
+                            },
+                        )
+                    await extend(session, index, user, scope, retrieved, follow_ups)
             else:
                 retrieved = await retrieve(session, get_vector_index(), user, scope, query)
             context = [
@@ -179,6 +212,7 @@ async def answer_stream(
                 "warnings": retrieved.warnings,
                 "mode": mode,
                 **({"plan": research_plan} if research_plan else {}),
+                **({"rewritten_query": rewritten} if rewritten else {}),
             }
             yield sse(
                 "sources",

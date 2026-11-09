@@ -19,6 +19,7 @@ import {
   UploadResult,
   formatBytes,
   statusLabel,
+  GIT_INTERVALS,
 } from '../../core/sources.api';
 import { KIND_ICONS, breadcrumb, hasRole, sourceIcon } from '../workbench/tree';
 import { TranslatePipe, t } from '../../core/i18n';
@@ -136,6 +137,66 @@ const ACCEPT = '';
         <p class="muted small">
           {{
             'Pages are fetched by the server: main text only (menus and footers removed), robots.txt is respected when following links, and private network addresses are refused.'
+              | t
+          }}
+        </p>
+      </mat-card>
+
+      <mat-card appearance="outlined" class="web" [class.disabled]="!target()">
+        <h2 class="section-inline"><mat-icon>source</mat-icon> {{ 'Add a git repository' | t }}</h2>
+        <div class="web-row">
+          <mat-form-field appearance="outline" subscriptSizing="dynamic" class="grow">
+            <mat-label>{{ 'Repository URL' | t }}</mat-label>
+            <input
+              matInput
+              [value]="gitUrl()"
+              (input)="gitUrl.set($any($event.target).value)"
+              [disabled]="!target()"
+              placeholder="http://gitlab.lan/team/project.git"
+            />
+          </mat-form-field>
+          <mat-form-field appearance="outline" subscriptSizing="dynamic" class="narrow">
+            <mat-label>{{ 'Branch' | t }}</mat-label>
+            <input
+              matInput
+              [value]="gitBranch()"
+              (input)="gitBranch.set($any($event.target).value)"
+              [disabled]="!target()"
+              placeholder="main"
+            />
+          </mat-form-field>
+        </div>
+        <div class="web-row">
+          <mat-form-field appearance="outline" subscriptSizing="dynamic" class="grow">
+            <mat-label>{{ 'Access token (private repositories)' | t }}</mat-label>
+            <input
+              matInput
+              type="password"
+              autocomplete="off"
+              [value]="gitToken()"
+              (input)="gitToken.set($any($event.target).value)"
+              [disabled]="!target()"
+            />
+          </mat-form-field>
+          <mat-form-field appearance="outline" subscriptSizing="dynamic" class="narrow">
+            <mat-label>{{ 'Synchronise' | t }}</mat-label>
+            <mat-select [value]="gitInterval()" (valueChange)="gitInterval.set($event)">
+              @for (o of gitIntervals; track o.minutes) {
+                <mat-option [value]="o.minutes">{{ o.label | t }}</mat-option>
+              }
+            </mat-select>
+          </mat-form-field>
+          <button
+            mat-flat-button
+            [disabled]="!target() || !gitUrl().trim() || adding()"
+            (click)="addGit()"
+          >
+            <mat-icon>add</mat-icon> {{ 'Add repository' | t }}
+          </button>
+        </div>
+        <p class="muted small">
+          {{
+            'The server clones the branch and indexes each file; later syncs only process what changed. Only hosts allowed by the administrator (GIT_ALLOWED_HOSTS) can be used. The token is stored encrypted and never shown again.'
               | t
           }}
         </p>
@@ -366,6 +427,11 @@ export class UploadComponent {
   readonly crawlDepth = signal(0);
   readonly maxPages = signal(20);
   readonly adding = signal(false);
+  readonly gitUrl = signal('');
+  readonly gitBranch = signal('');
+  readonly gitToken = signal('');
+  readonly gitInterval = signal(0);
+  protected readonly gitIntervals = GIT_INTERVALS;
   protected readonly size = formatBytes;
 
   constructor() {
@@ -406,6 +472,27 @@ export class UploadComponent {
       );
       this.results.set(res);
       if (res.every((r) => !r.error)) this.urls.set('');
+      await this.loadSources(target);
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      this.adding.set(false);
+    }
+  }
+
+  async addGit(): Promise<void> {
+    const target = this.target();
+    if (!target) return;
+    this.adding.set(true);
+    this.error.set(null);
+    try {
+      await this.sourcesApi.addGit(target, this.gitUrl().trim(), {
+        branch: this.gitBranch().trim() || null,
+        token: this.gitToken() || null,
+        sync_interval_minutes: this.gitInterval(),
+      });
+      this.gitUrl.set('');
+      this.gitToken.set('');
       await this.loadSources(target);
     } catch (err) {
       this.error.set(errorMessage(err));

@@ -29,6 +29,8 @@ export interface RelatedEntity {
   direction: 'in' | 'out';
   description: string | null;
   count: number;
+  relation_id: string;
+  manual: boolean;
 }
 
 export interface EntityDetail {
@@ -49,6 +51,25 @@ export interface WikiPageDto {
   generated_at: string | null;
   cached: boolean;
 }
+
+export const ENTITY_TYPES = Object.keys({
+  person: 1,
+  organization: 1,
+  product: 1,
+  component: 1,
+  technology: 1,
+  concept: 1,
+  location: 1,
+  event: 1,
+  document: 1,
+  standard: 1,
+  file: 1,
+  function: 1,
+  class: 1,
+  struct: 1,
+  interface: 1,
+  module: 1,
+});
 
 export const ENTITY_ICONS: Record<string, string> = {
   person: 'person',
@@ -95,5 +116,54 @@ export class GraphApi {
   wiki(id: string, scopeId: string, refresh = false): Promise<WikiPageDto> {
     const params = new HttpParams().set('scope_id', scopeId).set('refresh', refresh);
     return firstValueFrom(this.http.post<WikiPageDto>(`/api/entities/${id}/wiki`, {}, { params }));
+  }
+
+  // graph editor: the backend requires the editor role on the project
+  editEntity(
+    id: string,
+    scopeId: string,
+    body: { name?: string; type?: string },
+  ): Promise<EntityDetail> {
+    const params = new HttpParams().set('scope_id', scopeId);
+    return firstValueFrom(this.http.patch<EntityDetail>(`/api/entities/${id}`, body, { params }));
+  }
+
+  mergeEntity(id: string, scopeId: string, targetId: string): Promise<EntityDetail> {
+    const params = new HttpParams().set('scope_id', scopeId);
+    return firstValueFrom(
+      this.http.post<EntityDetail>(
+        `/api/entities/${id}/merge`,
+        { target_id: targetId },
+        { params },
+      ),
+    );
+  }
+
+  deleteEntity(id: string, scopeId: string): Promise<void> {
+    const params = new HttpParams().set('scope_id', scopeId);
+    return firstValueFrom(this.http.delete<void>(`/api/entities/${id}`, { params }));
+  }
+
+  addRelation(
+    scopeId: string,
+    sourceId: string,
+    targetId: string,
+    type: string,
+    description: string,
+  ): Promise<{ id: string }> {
+    return firstValueFrom(
+      this.http.post<{ id: string }>('/api/relations', {
+        scope_id: scopeId,
+        source_id: sourceId,
+        target_id: targetId,
+        type,
+        description: description || null,
+      }),
+    );
+  }
+
+  deleteRelation(id: string, scopeId: string): Promise<void> {
+    const params = new HttpParams().set('scope_id', scopeId);
+    return firstValueFrom(this.http.delete<void>(`/api/relations/${id}`, { params }));
   }
 }

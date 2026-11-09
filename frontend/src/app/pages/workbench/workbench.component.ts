@@ -89,6 +89,9 @@ export class WorkbenchComponent {
 
   /** Deep link /workbench?source=<id> (e.g. from a wiki citation) opens that source. */
   readonly source = input<string | undefined>();
+  /** Deep link /workbench?scope=<node>&conversation=<id> (from the chat history). */
+  readonly scope = input<string | undefined>();
+  readonly conversation = input<string | undefined>();
 
   readonly nodes = signal<TreeNodeDto[]>([]);
   /** Loaded pages of sources, by tree key (node id, or `s:<id>` for the members of an archive or crawl). */
@@ -168,6 +171,9 @@ export class WorkbenchComponent {
       this.nodes.set(await this.api.nodes());
       await this.reloadSources(false);
       const wanted = this.source();
+      const scope = this.scope();
+      if (scope && !this.selectedId() && this.nodes().some((n) => n.id === scope))
+        this.selectedId.set(scope);
       if (wanted && !this.selectedSourceId()) await this.openSource(wanted);
     } catch (err) {
       this.toast(errorMessage(err));

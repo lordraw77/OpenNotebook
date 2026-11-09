@@ -288,6 +288,15 @@ backoff up to `INGESTION_MAX_ATTEMPTS`, parse errors fail immediately.
   - an entity is visible only through visible mentions, and its name is the most frequent visible surface form;
   - a relation is visible only when its evidence passage is visible and the other end has a visible mention;
   - otherwise the API answers 404, as for a missing entity.
+- **Graph edits** (`graph/edit.py`, `api/graph.py`; 1.1): a person can rename (`entities.manual_name`), retype, merge
+  (`entities.merged_into`, followed by `GraphWriter` on later extractions), and delete (`entities.hidden`) entities,
+  and add or delete relations. Manual relations have `relations.manual = true` and no source passage: they are
+  visible when both ends are visible; a deleted extracted relation leaves a `relation_blocks` tombstone so it is
+  not created again. Edits are project-wide and need the editor role on the project.
+- **Git sources** (`ingestion/git.py`, `_sync_git` in `ingestion/pipeline.py`; 1.1): an archive-like root source whose
+  metadata holds the repository; a sync checks the remote commit (`git ls-remote`), clones only when it changed,
+  hashes the files and adds, replaces or removes child sources. The schedule is a Celery beat task inside the
+  worker (`opennotebook.git_sync_due`, every minute, `FOR UPDATE SKIP LOCKED` so several workers are safe).
 - **Wiki pages** (`graph/wiki.py`): written on first view by the `summary` chain (or `chat` when no summary chain
   exists) from at most `WIKI_MAX_PASSAGES` visible passages, round-robin across sources, with [Sn] citations
   validated like chat answers. The cache key is the hash of the passages used, so readers with the same visible
@@ -326,9 +335,13 @@ backoff up to `INGESTION_MAX_ATTEMPTS`, parse errors fail immediately.
   chat model selector lists allowed models only.
 - **Zero-downtime embedding change** (US-08, `ingestion/index_state.py`):
   - `project_settings.embedding_model_id` is the *serving* index; searches always embed the query with it.
-  - When the configured embedding model differs, ingestion embeds with the new model. A source stays searchable
-    in the serving index: chunk ids are deterministic (`uuid5(source, ordinal, sha256(text))`), so unchanged
-    chunks keep their old vectors; otherwise the source is embedded with both models.
+  - When the configured embedding model differs, ingestion embeds with the new model only (since 1.2; before, a
+    source added or changed during the change was embedded with both). A source not yet re-indexed keeps its
+    vectors in the serving collection; one that has been re-indexed is in the new collection and its old vectors
+    are deleted.
+  - While the two models differ and the new collection has vectors, `search_scope` embeds the query with both,
+    searches both collections with the same ACL pre-filters and fuses the two rankings by reciprocal rank
+    (scores of different models are not comparable). The `embedding_model` shown is "serving + configured".
   - After every finished, failed or purged source, `maybe_switch` locks the settings row. When nothing is queued
     or processing and every ready source has vectors of the new model, it switches the serving model in one
     update and deletes the project's points from the old collection.

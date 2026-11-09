@@ -32,6 +32,15 @@ class EntityRow:
 async def _names(session: AsyncSession, visible: Select, entity_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
     if not entity_ids:
         return {}
+    manual = dict(
+        (
+            await session.execute(
+                select(Entity.id, Entity.manual_name).where(
+                    Entity.id.in_(entity_ids), Entity.manual_name.is_not(None)
+                )
+            )
+        ).all()
+    )
     rows = await session.execute(
         select(EntityMention.entity_id, EntityMention.name, func.count())
         .where(EntityMention.entity_id.in_(entity_ids), EntityMention.source_id.in_(visible))
@@ -41,7 +50,14 @@ async def _names(session: AsyncSession, visible: Select, entity_ids: list[uuid.U
     for entity_id, name, count in rows.all():
         if entity_id not in best or count > best[entity_id][0]:
             best[entity_id] = (count, name)
-    return {k: v[1] for k, v in best.items()}
+    names = {k: v[1] for k, v in best.items()}
+    names.update({k: v for k, v in manual.items() if k in names})  # an edited name wins
+    return names
+
+
+def _edge_visible(visible: Select):  # noqa: ANN202 - SQLAlchemy clause
+    """Extracted relations need a visible evidence passage; manual ones need visible ends (callers check)."""
+    return or_(Relation.source_id.in_(visible), Relation.manual.is_(True))
 
 
 async def list_entities(
@@ -62,7 +78,7 @@ async def list_entities(
             func.count(func.distinct(EntityMention.source_id)).label("sources"),
         )
         .join(EntityMention, EntityMention.entity_id == Entity.id)
-        .where(EntityMention.source_id.in_(visible))
+        .where(EntityMention.source_id.in_(visible), Entity.hidden.is_(False))
         .group_by(Entity.id, Entity.type)
         .order_by(func.count(EntityMention.chunk_id).desc(), Entity.canonical)
         .limit(limit)
@@ -86,7 +102,7 @@ async def graph_view(
     visible = await visible_sources(session, user, scope)
     rows = await session.execute(
         select(Relation.src_id, Relation.dst_id, Relation.type, func.count())
-        .where(Relation.src_id.in_(ids), Relation.dst_id.in_(ids), Relation.source_id.in_(visible))
+        .where(Relation.src_id.in_(ids), Relation.dst_id.in_(ids), _edge_visible(visible))
         .group_by(Relation.src_id, Relation.dst_id, Relation.type)
     )
     edges = [{"source": str(s), "target": str(d), "type": t, "weight": n} for s, d, t, n in rows.all()]
@@ -96,7 +112,7 @@ async def graph_view(
 async def entity_detail(session: AsyncSession, user: User, scope: Node, entity_id: uuid.UUID) -> dict | None:
     visible = await visible_sources(session, user, scope)
     entity = await session.get(Entity, entity_id)
-    if entity is None:
+    if entity is None or entity.hidden:
         return None
     mentions = (
         await session.execute(
@@ -111,7 +127,7 @@ async def entity_detail(session: AsyncSession, user: User, scope: Node, entity_i
     if not mentions:
         return None  # not visible to this user in this scope: same answer as a missing entity
     names = Counter(m.name for m, *_ in mentions)
-    main_name = names.most_common(1)[0][0]
+    main_name = entity.manual_name or names.most_common(1)[0][0]
     aliases = list(
         {
             n.casefold(): n for n, _ in reversed(names.most_common()) if n.casefold() != main_name.casefold()
@@ -122,7 +138,7 @@ async def entity_detail(session: AsyncSession, user: User, scope: Node, entity_i
             await session.execute(
                 select(Relation).where(
                     or_(Relation.src_id == entity_id, Relation.dst_id == entity_id),
-                    Relation.source_id.in_(visible),
+                    _edge_visible(visible),
                 )
             )
         )
@@ -153,7 +169,9 @@ async def entity_detail(session: AsyncSession, user: User, scope: Node, entity_i
                 "direction": direction,
                 "description": r.description,
                 "count": 0,
-                "chunk_id": str(r.chunk_id),
+                "chunk_id": str(r.chunk_id) if r.chunk_id else None,
+                "relation_id": str(r.id),
+                "manual": r.manual,
             },
         )
         item["count"] += 1
@@ -178,7 +196,7 @@ async def entity_detail(session: AsyncSession, user: User, scope: Node, entity_i
 
 def score_expansion(
     seed_weight: dict[uuid.UUID, float],
-    relations: list[tuple[uuid.UUID, uuid.UUID, uuid.UUID]],
+    relations: list[tuple[uuid.UUID, uuid.UUID, uuid.UUID | None]],
     neighbour_chunks: dict[uuid.UUID, list[uuid.UUID]],
 ) -> dict[uuid.UUID, float]:
     """Scores candidate passages for graph expansion.
@@ -191,7 +209,8 @@ def score_expansion(
     """
     score: dict[uuid.UUID, float] = defaultdict(float)
     for src, dst, evidence in relations:
-        score[evidence] += seed_weight.get(src, 0.0) + seed_weight.get(dst, 0.0)
+        if evidence is not None:  # manual relations have no passage of their own
+            score[evidence] += seed_weight.get(src, 0.0) + seed_weight.get(dst, 0.0)
         for seed, neighbour in ((src, dst), (dst, src)):
             if seed in seed_weight and neighbour not in seed_weight:
                 for chunk_id in neighbour_chunks.get(neighbour, []):
@@ -230,7 +249,7 @@ async def expansion_hits(
             await session.execute(
                 select(Relation.src_id, Relation.dst_id, Relation.chunk_id).where(
                     or_(Relation.src_id.in_(seeds), Relation.dst_id.in_(seeds)),
-                    Relation.source_id.in_(visible),
+                    _edge_visible(visible),
                 )
             )
         ).all()

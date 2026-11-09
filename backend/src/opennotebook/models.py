@@ -460,6 +460,11 @@ class Entity(TimestampMixin, Base):
     canonical: Mapped[str] = mapped_column(String(300))
     name: Mapped[str] = mapped_column(String(300))
     type: Mapped[str] = mapped_column(String(40), default="concept")
+    # manual edits (graph editor): a chosen display name, a deletion tombstone and a merge pointer; extraction
+    # honours them so the next re-index does not undo what a person decided
+    manual_name: Mapped[str | None] = mapped_column(String(300))
+    hidden: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    merged_into: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("entities.id", ondelete="SET NULL"))
 
 
 class EntityMention(Base):
@@ -486,9 +491,26 @@ class Relation(Base):
     dst_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("entities.id", ondelete="CASCADE"), index=True)
     type: Mapped[str] = mapped_column(String(60))
     description: Mapped[str | None] = mapped_column(Text)
-    # the passage that states the relation; visibility follows its source
-    chunk_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("chunks.id", ondelete="CASCADE"))
-    source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sources.id", ondelete="CASCADE"), index=True)
+    # the passage that states the relation; visibility follows its source. Manual relations (added in the
+    # graph editor) have no passage: they are visible when both of their entities are.
+    chunk_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("chunks.id", ondelete="CASCADE"))
+    source_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("sources.id", ondelete="CASCADE"), index=True
+    )
+    manual: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
+
+class RelationBlock(Base):
+    """A relation a person deleted: extraction does not create it again."""
+
+    __tablename__ = "relation_blocks"
+    __table_args__ = (UniqueConstraint("project_id", "src_id", "dst_id", "type", name="uq_relation_blocks"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"), index=True)
+    src_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("entities.id", ondelete="CASCADE"))
+    dst_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("entities.id", ondelete="CASCADE"))
+    type: Mapped[str] = mapped_column(String(60))
 
 
 class WikiPage(Base):

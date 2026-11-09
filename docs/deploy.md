@@ -48,6 +48,23 @@ Set at least:
 Rules: write comments on their own line (Compose does not strip inline comments), and keep
 `APP_ENCRYPTION_KEY` safe — it decrypts the provider keys stored in the database.
 
+### Git repositories (optional)
+
+Repositories (for example an intranet GitLab over plain HTTP) can be added as sources in **Upload → Add a git
+repository**. They are off until the operator lists the hosts that may be cloned:
+
+```bash
+# .env: hosts (with the port when it is not the default), comma-separated
+GIT_ALLOWED_HOSTS=gitlab.lan,git.example.com:8080
+```
+
+The worker clones the branch, indexes each file as a child source and, with a schedule, syncs again (the worker
+checks every minute which repositories are due; `GIT_SYNC_SCHEDULER=false` turns the schedule off). A sync asks
+the server for the branch's commit first: if nothing changed nothing is cloned; otherwise only added, changed and
+removed files are processed. The worker host must reach the Git server (a LAN address works: the worker is on the
+egress network). For private repositories create a GitLab access token with `read_repository` and paste it in the
+form; it is stored encrypted and never shown again. Use the exact clone URL: redirects are not followed.
+
 ### Single sign-on (optional)
 
 OpenNotebook supports OpenID Connect (Authorization Code with PKCE) against any provider (Keycloak, Entra ID,

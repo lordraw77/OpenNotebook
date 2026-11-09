@@ -41,11 +41,12 @@ Continuous RAG quality evaluation from M2: a question/expected-answer dataset pe
 
 ## 2.2 Known limitations after M2
 
-- Follow-up questions are not rewritten by a model: a short follow-up is searched together with the previous
-  question. Rewriting and decomposition come with the advanced mode (M5).
+- ~~Follow-up questions are not rewritten by a model~~ Since 1.2 a model rewrites a follow-up into a standalone
+  search query (`CHAT_REWRITE_FOLLOWUPS`); if that call fails, a short follow-up is searched together with the
+  previous question as before.
 - Groundedness is checked structurally (valid markers, uncited sentences, abstention), not by a judge model.
-- Citations of a chunk that spans several PDF pages open its first page; the pager shows the other pages, and
-  their boxes are highlighted too.
+- Citations of a chunk that spans several PDF pages open its first page; since 1.2 the viewer says "This passage
+  spans pages 3 4" with one button per page, and the passage's boxes are highlighted on each of them.
 - The automated RAG quality evaluation (recall@k, citation accuracy, abstention rate on a fixed corpus) is still
   to be built; the M2 tests cover the mechanics with scripted models, plus a manual check on real providers.
 
@@ -81,13 +82,14 @@ Continuous RAG quality evaluation from M2: a question/expected-answer dataset pe
 
 - Provider keys are managed encrypted in Settings → Providers (since M0). Rotating `APP_ENCRYPTION_KEY` itself
   (re-encrypting the stored keys) is not automated yet (M6).
-- The deep research agent is a fixed plan → retrieve → write pipeline: no iterative tool loop, no follow-up
-  searches after reading. Each research costs one planning call, one retrieval per step and one long answer.
+- ~~The deep research agent is a fixed plan → retrieve → write pipeline~~ Since 1.2 it reads what it found and
+  searches again for what is missing (`RESEARCH_MAX_ROUNDS`, default 2): each round costs one short model call and
+  one retrieval per new question.
 - OIDC: no RP-initiated logout (signing out of OpenNotebook does not end the IdP session), no back-channel
   logout; group sync happens at sign-in only.
 - The provider policy restricts providers, not individual models; an empty policy blocks the project entirely.
-- During an embedding change, sources whose content changed are embedded twice (old and new model) until the
-  switch.
+- ~~During an embedding change, sources whose content changed are embedded twice~~ Since 1.2 a source is embedded
+  with the new model only; searches query both indexes while the change is running and fuse them by rank.
 
 ## 2.6 State after M6
 

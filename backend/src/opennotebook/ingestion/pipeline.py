@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from opennotebook.config import get_settings
 from opennotebook.ingestion import PIPELINE_VERSION, queue
+from opennotebook.ingestion import git as gitsrc
 from opennotebook.ingestion.archives import ArchiveRejected, Limits, Member, iter_members
 from opennotebook.ingestion.chunker import chunk_document, embedding_text
 from opennotebook.ingestion.convert import ConverterUnavailable
@@ -180,9 +181,6 @@ async def _ingest_source(
 
         await _set_status(session, source, SourceStatus.chunking)
         chunks = chunk_document(doc, settings.chunk_size_tokens, settings.chunk_overlap_tokens)
-        old_chunk_ids = set(
-            (await session.scalars(select(Chunk.id).where(Chunk.source_id == source.id))).all()
-        )
         await session.execute(delete(Chunk).where(Chunk.source_id == source.id))
         rows = [
             Chunk(
@@ -229,51 +227,23 @@ async def _ingest_source(
             for row, c, vec, text in zip(rows, chunks, vectors, texts, strict=True)
         ]
 
-        # US-08: while the project's searches are served by another model's index, keep the source
-        # searchable there: unchanged chunks (same deterministic ids) keep their old vectors; otherwise the
-        # source is embedded with the serving model too.
+        # US-08: a source is embedded with the configured (target) model only. While the serving index of the
+        # project belongs to another model, searches query both indexes (see `search_scope`): a source added
+        # or changed during the change is searchable at once and never embedded twice. The serving model of a
+        # new project is set here, by its first source.
         from opennotebook.ingestion import index_state
 
-        serving_id = await index_state.serving_model_id(session, project_id, default=model.id)
-        serving_collection = collection_for(serving_id) if serving_id else collection
-        also_indexed: str | None = None
-        if serving_collection != collection:
-            in_serving = serving_collection in {
-                source.vector_collection,
-                (source.metadata_ or {}).get("also_indexed_in"),
-            }
-            unchanged = in_serving and {r.id for r in rows} == old_chunk_ids
-            if not unchanged:
-                try:
-                    serving_vectors = await _embed_all(gateway, texts, project_id, serving_id)
-                except GatewayError as exc:
-                    source.warnings = [
-                        *source.warnings,
-                        f"Not searchable until the index switch completes: {exc.describe()}"[:300],
-                    ]
-                else:
-                    await index.ensure_collection(serving_collection, len(serving_vectors[0]))
-                    await index.delete_source(serving_collection, source.id)
-                    await index.upsert(
-                        serving_collection,
-                        [
-                            PointData(chunk_id=p.chunk_id, dense=v, sparse=p.sparse, payload=p.payload)
-                            for p, v in zip(points, serving_vectors, strict=True)
-                        ],
-                    )
-            also_indexed = serving_collection
-
+        await index_state.serving_model_id(session, project_id, default=model.id)
         await index.ensure_collection(collection, len(vectors[0]))
+        await index.delete_source(collection, source.id)
+        await index.upsert(collection, points)
+        # vectors of the previous model (and of the pre-1.2 "also indexed" copy) are no longer needed
         for stale in {source.vector_collection, (source.metadata_ or {}).get("also_indexed_in")} - {
             None,
             collection,
-            serving_collection,
         }:
             await index.delete_source(stale, source.id)
-        await index.delete_source(collection, source.id)
-        await index.upsert(collection, points)
-        meta = {k: v for k, v in (source.metadata_ or {}).items() if k != "also_indexed_in"}
-        source.metadata_ = {**meta, "also_indexed_in": also_indexed} if also_indexed else meta
+        source.metadata_ = {k: v for k, v in (source.metadata_ or {}).items() if k != "also_indexed_in"}
         if model.embedding_dim != len(vectors[0]):
             model.embedding_dim = len(vectors[0])
 
@@ -302,8 +272,14 @@ async def _ingest_source(
         await _try_switch(session, project_id, index)
         return SourceStatus.ready
 
-    except (TransientFetchError, ConverterUnavailable) as exc:
-        code = "converter_unavailable" if isinstance(exc, ConverterUnavailable) else "fetch_error"
+    except (TransientFetchError, ConverterUnavailable, gitsrc.GitTransient) as exc:
+        code = (
+            "converter_unavailable"
+            if isinstance(exc, ConverterUnavailable)
+            else "git_error"
+            if isinstance(exc, gitsrc.GitTransient)
+            else "fetch_error"
+        )
         await session.rollback()
         source = await session.get(Source, source_id)
         job_row = await session.get(IngestionJob, job_id)
@@ -431,6 +407,8 @@ async def _parse_source(
     settings = get_settings()
     if source.kind == SourceKind.web:
         return await _parse_web(session, source, store)
+    if source.kind == SourceKind.archive and (source.metadata_ or {}).get("git"):
+        return await _sync_git(session, source, store)
     raw = await store.get(blob_key(source.id, "original"))
     # the PDF rendition is set again below when the source is (still) converted
     source.metadata_ = {k: v for k, v in (source.metadata_ or {}).items() if k != "rendition"}
@@ -679,6 +657,199 @@ async def _expand_archive(
         b.heading(f"Directory {directory}", 2)
         for i in range(0, len(lines), 40):
             b.block("\n".join(lines[i : i + 40]), "list")
+    if skipped:
+        b.heading("Skipped files", 2)
+        lines = [f"{s['path']}: {s['reason']}" for s in skipped[:500]]
+        for i in range(0, len(lines), 40):
+            b.block("\n".join(lines[i : i + 40]), "list")
+    return b.build()
+
+
+# --- git repositories --------------------------------------------------------------------------------
+
+
+def git_signature(meta: dict) -> str:
+    """What decides which files are read: a change here forces a new look even at the same commit."""
+    return hashlib.sha256(
+        repr(
+            (meta.get("branch"), sorted(meta.get("include") or []), sorted(meta.get("exclude") or []))
+        ).encode()
+    ).hexdigest()[:16]
+
+
+async def git_token(session: AsyncSession, source: Source) -> str | None:
+    from opennotebook.crypto import get_secret_box
+    from opennotebook.models import Secret
+
+    secret_id = (source.metadata_ or {}).get("git_secret_id")
+    if not secret_id:
+        return None
+    secret = await session.get(Secret, uuid.UUID(secret_id))
+    return get_secret_box().decrypt(secret.ciphertext, secret.nonce) if secret else None
+
+
+async def _sync_git(session: AsyncSession, source: Source, store: BlobStore) -> ParsedDocument:
+    """Bring the repository's files up to date: clone, compare hashes, add / replace / remove child sources.
+
+    Unchanged files keep their index; at the same commit and settings nothing is cloned at all.
+    """
+    settings = get_settings()
+    meta = dict((source.metadata_ or {}).get("git") or {})
+    url = gitsrc.validate_url(meta["url"])  # the allow-list is checked again at every sync
+    branch = gitsrc.validate_branch(meta.get("branch"))
+    token = await git_token(session, source)
+    username = meta.get("username")
+    signature = git_signature(meta)
+    prefix = source.original_path or url
+    children = [c for c in await descendants(session, source.id) if c.parent_source_id == source.id]
+
+    commit = await gitsrc.remote_commit(url, branch, token, username)
+    if children and commit == meta.get("commit") and signature == meta.get("signature"):
+        meta.update(synced_at=datetime.now(UTC).isoformat(), last_error=None, changed=0)
+        source.metadata_ = {**(source.metadata_ or {}), "git": meta}
+        return _git_manifest(source, meta, children_count=len(children))
+
+    checkout = await gitsrc.clone(url, branch, token, username)
+    try:
+        files, skipped = gitsrc.walk(
+            checkout.path,
+            meta.get("exclude") or [],
+            meta.get("include") or [],
+            settings.git_max_files,
+            settings.upload_max_mb * 1024 * 1024,
+        )
+        if gitsrc.tree_size(files) > settings.git_max_repo_mb * 1024 * 1024:
+            raise gitsrc.GitError(
+                f"The repository is larger than GIT_MAX_REPO_MB ({settings.git_max_repo_mb} MB)"
+            )
+        old = {c.original_path: c for c in children if c.deleted_at is None}
+        wanted = {f"{prefix}!/{f.path}": f for f in files}
+        now = datetime.now(UTC)
+        removed = changed = added = 0
+        purge: list[uuid.UUID] = []
+        for key, child in old.items():
+            f = wanted.get(key)
+            if f is not None and f.sha256 == child.content_sha256:
+                continue
+            for member in [child, *await descendants(session, child.id)]:
+                member.deleted_at = now
+                member.note_id = None
+                purge.append(member.id)
+            if f is None:
+                removed += 1
+            else:
+                changed += 1
+        await session.flush()
+        kept = {k for k, c in old.items() if c.deleted_at is None}
+        taken = set(
+            (
+                await session.scalars(
+                    select(Source.content_sha256).where(
+                        Source.notebook_id == source.notebook_id,
+                        Source.deleted_at.is_(None),
+                        Source.kind != SourceKind.note,
+                    )
+                )
+            ).all()
+        )
+        created: list[Source] = []
+        stored: list[str] = []
+        try:
+            for key, f in wanted.items():
+                if key in kept:
+                    continue
+                data = gitsrc.read(checkout.path, f.path)
+                try:
+                    sniffed = sniff(data, f.path)
+                except UnsupportedContent as exc:
+                    skipped.append({"path": f.path, "reason": str(exc)[:200]})
+                    continue
+                if sniffed.kind == "image" and not settings.archive_index_images:
+                    skipped.append({"path": f.path, "reason": "image (ARCHIVE_INDEX_IMAGES is off)"})
+                    continue
+                if f.sha256 in taken:
+                    skipped.append(
+                        {"path": f.path, "reason": "same content as another source in the notebook"}
+                    )
+                    continue
+                taken.add(f.sha256)
+                child = Source(
+                    id=uuid.uuid4(),
+                    notebook_id=source.notebook_id,
+                    parent_source_id=source.id,
+                    kind=SourceKind(sniffed.kind),
+                    title=f.path[-500:],
+                    original_path=key,
+                    mime_type=sniffed.mime_type,
+                    language=sniffed.language,
+                    content_sha256=f.sha256,
+                    size_bytes=f.size,
+                    status=SourceStatus.queued,
+                    created_by=source.created_by,
+                    active=source.active,
+                    warnings=[],
+                    metadata_={"format": sniffed.format, "archive_depth": 1, "git_path": f.path},
+                )
+                blob = blob_key(child.id, "original")
+                await store.put(blob, data, sniffed.mime_type)
+                stored.append(blob)
+                created.append(child)
+                added += key not in old  # replaced files count as changed, not added
+        except BaseException:
+            for blob in stored:
+                await store.delete(blob)
+            raise
+        for child in created:
+            session.add(child)
+            session.add(
+                SourceBlob(
+                    source_id=child.id,
+                    role="original",
+                    object_key=blob_key(child.id, "original"),
+                    size_bytes=child.size_bytes,
+                    content_type=child.mime_type or "application/octet-stream",
+                )
+            )
+        meta.update(
+            commit=checkout.commit,
+            branch=meta.get("branch") or checkout.branch,
+            signature=signature,
+            synced_at=now.isoformat(),
+            last_error=None,
+            added=added,
+            changed=changed,
+            removed=removed,
+            files=len(kept) + added,
+            skipped_count=len(skipped),
+            skipped=skipped[:500],
+        )
+        source.metadata_ = {**(source.metadata_ or {}), "git": meta}
+        source.size_bytes = gitsrc.tree_size(files)
+    finally:
+        gitsrc.discard(checkout)
+    manifest = _git_manifest(
+        source, meta, children_count=len(kept) + added
+    )  # before the commit expires `source`
+    created_ids = [c.id for c in created]
+    await session.commit()
+    for source_id in purge:
+        queue.enqueue_purge(source_id)
+    for child_id in created_ids:
+        queue.enqueue_ingestion(child_id, "git")
+    return manifest
+
+
+def _git_manifest(source: Source, meta: dict, children_count: int) -> ParsedDocument:
+    """The repository itself is indexed as its description, so "which repository is this" can be answered."""
+    b = DocumentBuilder(source.title)
+    b.heading(f"Git repository {meta['url']}", 1)
+    b.block(
+        f"Branch {meta.get('branch') or 'default'}, commit {(meta.get('commit') or '')[:12]}. "
+        f"{children_count} files indexed, {meta.get('skipped_count', 0)} skipped. "
+        f"Last synchronised {meta.get('synced_at', '')}.",
+        "paragraph",
+    )
+    skipped = meta.get("skipped") or []
     if skipped:
         b.heading("Skipped files", 2)
         lines = [f"{s['path']}: {s['reason']}" for s in skipped[:500]]

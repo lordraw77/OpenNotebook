@@ -35,6 +35,10 @@ a citation highlights the exact passage.
 | Source code with structure-aware chunking (tree-sitter: C, C++, Python, JS/TS, Java, Go, Rust, C#, PHP, Ruby, shell; other languages by lines) | ✅ M3 |
 | ZIP / TAR archives (each file a source, nested archives, zip-bomb and path-traversal protection) | ✅ M3 |
 | Images and scanned PDF pages: OCR + description by external models | ✅ M3 |
+| Git repositories (http/https, e.g. an intranet GitLab): clone, token stored encrypted, sync on request or on a schedule, only changed files re-indexed | ✅ 1.1 |
+| XLSX and PPTX read directly (sheet/row and slide anchors), no converter needed | ✅ 1.1 |
+| Deep research that searches again for what is missing; follow-up questions rewritten by a model; chat history across scopes (search, export) | ✅ 1.2 |
+| Graph editor: rename, retype, merge, delete entities; add and remove relations; edits survive re-indexing | ✅ 1.1 |
 | Web pages by URL (main text only, SSRF protection, optional same-site crawl respecting robots.txt) | ✅ M3 |
 | Summary and suggested questions per document (click a question to ask it) | ✅ M3 |
 | Knowledge graph: entities and relations from documents (graph extraction model) and from code (symbols, imports, calls — no model) | ✅ M4 |

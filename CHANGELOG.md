@@ -2,6 +2,34 @@
 
 All notable changes. Images: `lordraw/opennotebook-{web,api,worker}` on Docker Hub.
 
+## 1.2.0 — 2026-11-09
+
+- Deep research reads what it found and searches again for what is missing (`RESEARCH_MAX_ROUNDS`, default 2;
+  `RESEARCH_MAX_PASSAGES` now 30). New `reflecting` status and `plan` events with a `round`.
+- Follow-up questions are rewritten by a model into a standalone search query (`CHAT_REWRITE_FOLLOWUPS`,
+  `CHAT_REWRITE_TIMEOUT_S`): new `rewriting` status and `query` event, `checks.rewritten_query` on the answer;
+  falls back to the previous behaviour when the call fails.
+- Embedding model change: a source is embedded with the new model only. While the change runs, searches embed
+  the query with both models, query both indexes and fuse the rankings, so nothing is embedded twice and
+  sources added meanwhile are searchable at once. Old vectors of a re-indexed source are deleted.
+- Citations over several PDF pages: the viewer lists the pages of the passage and jumps between them.
+- Chat history: new page *History* (all conversations across scopes, search in messages, scope filter, date
+  groups, open in its scope, delete, download as Markdown); `GET /api/conversations/history`,
+  `GET /api/conversations/{id}/export`; the workbench accepts `?scope=&conversation=`.
+
+## 1.1.0 — 2026-11-09
+
+- Git repositories as sources (`POST /api/nodes/{id}/git`, `POST /api/sources/{id}/sync`,
+  `PATCH /api/sources/{id}/git`): http(s) clone of one branch, access token stored encrypted, host allow-list
+  `GIT_ALLOWED_HOSTS` (off by default), sync on request and on a schedule (`GIT_SYNC_SCHEDULER`, beat runs inside
+  the worker), incremental by commit and file hash. The worker image now contains `git`.
+- XLSX and PPTX are read directly: sheet/row and slide anchors, speaker notes, hidden sheets skipped, zip-bomb
+  limit. `OFFICE_NATIVE=false` keeps the converter path. New dependencies: openpyxl, python-pptx, defusedxml.
+- Editable knowledge graph: `PATCH/DELETE /api/entities/{id}`, `POST /api/entities/{id}/merge`,
+  `POST /api/relations`, `DELETE /api/relations/{id}` (editor role on the project). Migration 0007; edits survive
+  re-indexing (renames, merges, deleted entities and relations are remembered); manual relations take part in
+  graph expansion of the chat context. UI: "Edit the graph" on the wiki page.
+
 ## 1.0.1 — 2026-11-09
 
 - Rerank models of an Ollama provider are called through `POST <base_url>/rerank` (Jina/Cohere format), as served by

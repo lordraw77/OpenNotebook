@@ -84,9 +84,22 @@ class FakeChat:
     def __init__(self) -> None:
         self.calls: list[dict] = []
         self.behavior: dict[str, str] = {}
+        self.helper_calls: list[str] = []
+        self.rewrite: str | None = None  # what the model answers to a follow-up rewrite (default: unchanged)
+        self.reflection = '{"enough": true, "follow_up_questions": []}'
         self.answer = "Hold the reset button for ten seconds [S1]. Unknown marker [S9]."
 
     async def __call__(self, model, messages, stream=False, **kwargs):
+        if (
+            not stream
+        ):  # helper calls (follow-up rewrite, research reflection) are kept apart from the answers
+            prompt = messages[-1]["content"]
+            self.helper_calls.append(prompt)
+            if "Rewrite the last question" in prompt:
+                content = self.rewrite or prompt.rsplit("Last question:", 1)[1].strip()
+            else:
+                content = self.reflection
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
         self.calls.append({"model": model, "messages": messages, "kwargs": kwargs})
         mode = self.behavior.get(model.split("/", 1)[1], "ok")
         if mode == "fail":
@@ -358,3 +371,35 @@ async def test_save_answer_as_note_and_text_endpoint(client, admin_headers, sess
     # deleting a conversation removes its messages
     assert (await client.delete(f"/api/conversations/{conv['id']}", headers=admin_headers)).status_code == 204
     assert (await client.get(f"/api/conversations/{conv['id']}", headers=admin_headers)).status_code == 404
+
+
+async def test_follow_up_is_rewritten_by_a_model(client, admin_headers, world, chat):
+    conv = await new_conversation(client, admin_headers, world.wifi["id"])
+    first = await ask(client, admin_headers, conv["id"], "How do I restore the factory settings?")
+    assert "query" not in [k for k, _ in first]  # nothing to rewrite in the first message
+    assert chat.fake.helper_calls == []
+
+    chat.fake.rewrite = "How long must the reset button be held to restore the factory settings?"
+    events = await ask(client, admin_headers, conv["id"], "and for how long?")
+    rewritten = event(events, "query")
+    assert rewritten["text"] == chat.fake.rewrite and rewritten["model"] == "groq/chat-a"
+    kinds = [k for k, _ in events]
+    assert kinds.index("status") < kinds.index("query") < kinds.index("sources")
+    assert "Conversation:" in chat.fake.helper_calls[0] and "and for how long?" in chat.fake.helper_calls[0]
+    assert event(events, "done")["checks"]["rewritten_query"] == chat.fake.rewrite
+    # the answer itself still receives the user's own question
+    assert "and for how long?" in chat.fake.calls[-1]["messages"][-1]["content"]
+
+    # a standalone question comes back unchanged: no event, the heuristic is not needed either
+    chat.fake.rewrite = None
+    events = await ask(client, admin_headers, conv["id"], "How do I restore the factory settings again?")
+    assert "query" not in [k for k, _ in events]
+
+
+async def test_a_failed_rewrite_falls_back_to_the_previous_question(client, admin_headers, world, chat):
+    conv = await new_conversation(client, admin_headers, world.wifi["id"])
+    await ask(client, admin_headers, conv["id"], "How do I restore the factory settings?")
+    chat.fake.rewrite = "x" * 5000  # unusable reply
+    events = await ask(client, admin_headers, conv["id"], "and for how long?")
+    assert "query" not in [k for k, _ in events]
+    assert event(events, "done")["status"] == "complete"

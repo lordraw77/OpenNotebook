@@ -13,7 +13,14 @@ import { Router } from '@angular/router';
 
 import { TreeNodeDto } from '../../core/api.models';
 import { ApiService, errorMessage } from '../../core/api.service';
-import { ENTITY_ICONS, EntityDetail, EntityDto, GraphApi, WikiPageDto } from '../../core/graph.api';
+import {
+  ENTITY_ICONS,
+  ENTITY_TYPES,
+  EntityDetail,
+  EntityDto,
+  GraphApi,
+  WikiPageDto,
+} from '../../core/graph.api';
 import { Citation, citationLocation } from '../../core/sources.api';
 import { AnswerViewComponent } from '../workbench/answer-view.component';
 import { SourceViewerComponent } from '../workbench/source-viewer.component';
@@ -206,6 +213,15 @@ const TYPE_COLORS: Record<string, string> = {
               <span class="spacer"></span>
               <button
                 mat-icon-button
+                [matTooltip]="'Edit the graph' | t"
+                [attr.aria-label]="'Edit the graph' | t"
+                [class.on]="editing()"
+                (click)="toggleEdit(d)"
+              >
+                <mat-icon>edit</mat-icon>
+              </button>
+              <button
+                mat-icon-button
                 [matTooltip]="'Rewrite the page' | t"
                 [attr.aria-label]="'Rewrite the page' | t"
                 [disabled]="writing()"
@@ -214,6 +230,72 @@ const TYPE_COLORS: Record<string, string> = {
                 <mat-icon>refresh</mat-icon>
               </button>
             </header>
+
+            @if (editing()) {
+              <section class="edit">
+                <p class="muted small">
+                  {{
+                    'Edits apply to the whole project and are kept when sources are indexed again. They need the editor role on the project.'
+                      | t
+                  }}
+                </p>
+                @if (editError()) {
+                  <p class="error-text">{{ editError() }}</p>
+                }
+                <div class="edit-row">
+                  <mat-form-field appearance="outline" subscriptSizing="dynamic">
+                    <mat-label>{{ 'Name' | t }}</mat-label>
+                    <input matInput [(ngModel)]="editName" />
+                  </mat-form-field>
+                  <mat-form-field appearance="outline" subscriptSizing="dynamic">
+                    <mat-label>{{ 'Type' | t }}</mat-label>
+                    <mat-select [(ngModel)]="editType">
+                      @for (k of entityTypes; track k) {
+                        <mat-option [value]="k">{{ k }}</mat-option>
+                      }
+                    </mat-select>
+                  </mat-form-field>
+                  <button mat-stroked-button (click)="saveEntity(d)">{{ 'Save' | t }}</button>
+                </div>
+                <div class="edit-row">
+                  <mat-form-field appearance="outline" subscriptSizing="dynamic" class="grow">
+                    <mat-label>{{ 'Merge into' | t }}</mat-label>
+                    <mat-select [(ngModel)]="mergeTarget">
+                      @for (e of otherEntities(); track e.id) {
+                        <mat-option [value]="e.id">{{ e.name }} ({{ e.type }})</mat-option>
+                      }
+                    </mat-select>
+                  </mat-form-field>
+                  <button mat-stroked-button [disabled]="!mergeTarget" (click)="merge(d)">
+                    {{ 'Merge' | t }}
+                  </button>
+                  <button mat-stroked-button color="warn" (click)="removeEntity(d)">
+                    {{ 'Delete entity' | t }}
+                  </button>
+                </div>
+                <div class="edit-row">
+                  <mat-form-field appearance="outline" subscriptSizing="dynamic">
+                    <mat-label>{{ 'Relation' | t }}</mat-label>
+                    <input matInput [(ngModel)]="relType" placeholder="depends_on" />
+                  </mat-form-field>
+                  <mat-form-field appearance="outline" subscriptSizing="dynamic" class="grow">
+                    <mat-label>{{ 'To' | t }}</mat-label>
+                    <mat-select [(ngModel)]="relTarget">
+                      @for (e of otherEntities(); track e.id) {
+                        <mat-option [value]="e.id">{{ e.name }} ({{ e.type }})</mat-option>
+                      }
+                    </mat-select>
+                  </mat-form-field>
+                  <button
+                    mat-stroked-button
+                    [disabled]="!relType.trim() || !relTarget"
+                    (click)="addRelation(d)"
+                  >
+                    {{ 'Add relation' | t }}
+                  </button>
+                </div>
+              </section>
+            }
 
             <section class="body">
               @if (writing()) {
@@ -258,6 +340,17 @@ const TYPE_COLORS: Record<string, string> = {
                     <mat-icon [style.color]="color(r.type)">{{ icon(r.type) }}</mat-icon>
                     {{ r.name }}
                   </button>
+                  @if (editing()) {
+                    <button
+                      mat-icon-button
+                      class="rel-del"
+                      [matTooltip]="'Delete this relation' | t"
+                      [attr.aria-label]="'Delete this relation' | t"
+                      (click)="removeRelation(r.relation_id)"
+                    >
+                      <mat-icon>close</mat-icon>
+                    </button>
+                  }
                 }
               </div>
             }
@@ -532,6 +625,28 @@ const TYPE_COLORS: Record<string, string> = {
     .pad {
       padding: 0 16px;
     }
+    .edit {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 12px;
+      margin: 8px 0;
+      border: 1px solid var(--mat-sys-outline-variant);
+      border-radius: 8px;
+    }
+    .edit-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .edit-row .grow {
+      flex: 1;
+      min-width: 180px;
+    }
+    .rel-del {
+      transform: scale(0.7);
+    }
     @media (max-width: 900px) {
       .wiki {
         grid-template-columns: 1fr;
@@ -588,6 +703,17 @@ export class WikiComponent {
   private pan: { x: number; y: number; box: [number, number, number, number] } | null = null;
 
   protected readonly loc = citationLocation;
+  protected readonly entityTypes = ENTITY_TYPES;
+
+  // graph editor
+  readonly editing = signal(false);
+  readonly editError = signal<string | null>(null);
+  editName = '';
+  editType = 'concept';
+  mergeTarget: string | null = null;
+  relType = '';
+  relTarget: string | null = null;
+  readonly otherEntities = computed(() => this.entities().filter((e) => e.id !== this.entityId()));
 
   constructor() {
     void this.api.nodes().then((nodes) => {
@@ -718,5 +844,77 @@ export class WikiComponent {
 
   panEnd(): void {
     this.pan = null;
+  }
+
+  toggleEdit(d: EntityDetail): void {
+    this.editing.set(!this.editing());
+    this.editError.set(null);
+    this.editName = d.name;
+    this.editType = d.type;
+    this.mergeTarget = null;
+    this.relTarget = null;
+    this.relType = '';
+  }
+
+  private async edited(work: () => Promise<unknown>, reopen: string | null): Promise<void> {
+    this.editError.set(null);
+    try {
+      await work();
+    } catch (err) {
+      this.editError.set(errorMessage(err));
+      return;
+    }
+    const scope = this.scopeId();
+    if (scope) await this.loadScope(scope);
+    if (reopen) await this.openEntity(reopen);
+    else {
+      this.entityId.set(null);
+      this.detail.set(null);
+      this.view.set('graph');
+    }
+    this.editing.set(reopen !== null && this.editing());
+  }
+
+  saveEntity(d: EntityDetail): Promise<void> {
+    const scope = this.scopeId()!;
+    return this.edited(
+      () => this.graphApi.editEntity(d.id, scope, { name: this.editName, type: this.editType }),
+      d.id,
+    );
+  }
+
+  merge(d: EntityDetail): Promise<void> {
+    const scope = this.scopeId()!;
+    const target = this.mergeTarget!;
+    return this.edited(() => this.graphApi.mergeEntity(d.id, scope, target), target);
+  }
+
+  removeEntity(d: EntityDetail): Promise<void> {
+    if (
+      !confirm(
+        t('Delete "{name}" from the graph? It will not come back when sources are indexed again.', {
+          name: d.name,
+        }),
+      )
+    ) {
+      return Promise.resolve();
+    }
+    const scope = this.scopeId()!;
+    return this.edited(() => this.graphApi.deleteEntity(d.id, scope), null);
+  }
+
+  addRelation(d: EntityDetail): Promise<void> {
+    const scope = this.scopeId()!;
+    const target = this.relTarget!;
+    return this.edited(
+      () => this.graphApi.addRelation(scope, d.id, target, this.relType.trim(), ''),
+      d.id,
+    );
+  }
+
+  removeRelation(relationId: string): Promise<void> {
+    const scope = this.scopeId()!;
+    const id = this.entityId();
+    return this.edited(() => this.graphApi.deleteRelation(relationId, scope), id);
   }
 }

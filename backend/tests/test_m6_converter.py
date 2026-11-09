@@ -47,6 +47,8 @@ OLE2 = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + bytes(504)
 
 @pytest.fixture
 def converter(monkeypatch):  # type: ignore[no-untyped-def]
+    # PPTX and XLSX are read natively by default; these tests exercise the converter path
+    monkeypatch.setattr(get_settings(), "office_native", False)
     calls: list[str] = []
     state = {"mode": "ok"}
 
@@ -64,6 +66,7 @@ def converter(monkeypatch):  # type: ignore[no-untyped-def]
 
 
 def test_sniff_office_formats(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(get_settings(), "office_native", False)
     monkeypatch.setattr(get_settings(), "converter_url", None)
     with pytest.raises(UnsupportedContent, match="converter service"):
         sniff(PPTX, "deck.pptx")
@@ -136,3 +139,12 @@ async def test_office_document_gets_pdf_rendition_and_pages(
     await session.rollback()
     retried = (await client.get(f"/api/sources/{sid}", headers=admin_headers)).json()
     assert retried["error"]["code"] == "converter_unavailable"
+
+
+def test_native_xlsx_and_pptx_need_no_converter(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(get_settings(), "converter_url", None)
+    assert sniff(PPTX, "deck.pptx").format == "pptx"
+    assert sniff(ooxml("xl/workbook.xml"), "b.xlsx").format == "xlsx"
+    # legacy and ODF formats still need it
+    with pytest.raises(UnsupportedContent, match="converter service"):
+        sniff(odf("application/vnd.oasis.opendocument.text"), "c.odt")

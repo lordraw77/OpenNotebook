@@ -62,6 +62,11 @@ migrate:
   backoffLimit: 20
   ttlSecondsAfterFinished: 86400
 
+# Git repository sources: hosts that may be cloned (http/https), comma-separated, port when not default.
+# Empty = off. The worker must be able to reach them.
+git:
+  allowedHosts: ""
+
 # Isolated office-to-PDF converter (headless LibreOffice): PPTX, XLSX, ODF, DOC/XLS/PPT, RTF and DOCX pages.
 converter:
   enabled: false

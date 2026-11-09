@@ -1,6 +1,10 @@
 import { DatePipe } from '@angular/common';
 import { Component, effect, inject, input, output, signal } from '@angular/core';
+import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatInputModule } from '@angular/material/input';
+import { MatSelectModule } from '@angular/material/select';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatSnackBar } from '@angular/material/snack-bar';
@@ -9,6 +13,8 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { errorMessage } from '../../core/api.service';
 import {
   ChunkDto,
+  GIT_INTERVALS,
+  GitSettings,
   SourceDto,
   SourcesApi,
   TERMINAL,
@@ -24,7 +30,11 @@ const PAGE = 50;
   imports: [
     TranslatePipe,
     DatePipe,
+    FormsModule,
     MatButtonModule,
+    MatFormFieldModule,
+    MatInputModule,
+    MatSelectModule,
     MatIconModule,
     MatProgressBarModule,
     MatTooltipModule,
@@ -166,6 +176,84 @@ const PAGE = 50;
               </p>
             }
           }
+          @if (s.details.git; as g) {
+            <section class="summary">
+              <h4><mat-icon inline>source</mat-icon> {{ 'Git repository' | t }}</h4>
+              <p>
+                <code>{{ g.url }}</code> · {{ g.branch ?? ('default branch' | t) }}
+                @if (g.commit) {
+                  · <code>{{ g.commit.slice(0, 10) }}</code>
+                }
+              </p>
+              @if (g.synced_at) {
+                <p class="muted">
+                  {{ 'synchronised {date}' | t: { date: g.synced_at | date: 'short' } }} ·
+                  {{
+                    '{added} added, {changed} changed, {removed} removed, {files} files'
+                      | t
+                        : {
+                            added: g.added ?? 0,
+                            changed: g.changed ?? 0,
+                            removed: g.removed ?? 0,
+                            files: g.files ?? 0,
+                          }
+                  }}
+                </p>
+              }
+              @if (canEdit()) {
+                <div class="git-row">
+                  <button mat-flat-button [disabled]="!terminal(s)" (click)="sync(s)">
+                    <mat-icon>sync</mat-icon> {{ 'Sync now' | t }}
+                  </button>
+                  <mat-form-field appearance="outline" subscriptSizing="dynamic">
+                    <mat-label>{{ 'Synchronise' | t }}</mat-label>
+                    <mat-select
+                      [ngModel]="g.sync_interval_minutes"
+                      (ngModelChange)="saveGit(s, { sync_interval_minutes: $event })"
+                    >
+                      @for (o of intervals; track o.minutes) {
+                        <mat-option [value]="o.minutes">{{ o.label | t }}</mat-option>
+                      }
+                    </mat-select>
+                  </mat-form-field>
+                  <mat-form-field appearance="outline" subscriptSizing="dynamic">
+                    <mat-label>{{ 'Branch' | t }}</mat-label>
+                    <input
+                      matInput
+                      [ngModel]="g.branch ?? ''"
+                      (change)="saveGit(s, { branch: $any($event.target).value.trim() || null })"
+                    />
+                  </mat-form-field>
+                  <mat-form-field appearance="outline" subscriptSizing="dynamic">
+                    <mat-label>{{
+                      g.token_set ? ('Replace token' | t) : ('Access token' | t)
+                    }}</mat-label>
+                    <input
+                      matInput
+                      type="password"
+                      autocomplete="off"
+                      (change)="saveGit(s, { token: $any($event.target).value })"
+                    />
+                  </mat-form-field>
+                </div>
+                <mat-form-field appearance="outline" subscriptSizing="dynamic" class="wide">
+                  <mat-label>{{ 'Exclude (patterns, one per line)' | t }}</mat-label>
+                  <textarea
+                    matInput
+                    rows="2"
+                    [ngModel]="
+                      g.exclude.join(
+                        '
+'
+                      )
+                    "
+                    (change)="saveGit(s, { exclude: lines($any($event.target).value) })"
+                    placeholder="docs/generated/*&#10;*.csv"
+                  ></textarea>
+                </mat-form-field>
+              }
+            </section>
+          }
           @if (s.details.archive; as a) {
             <section class="summary">
               <h4><mat-icon inline>folder_zip</mat-icon> {{ 'Archive' | t }}</h4>
@@ -290,6 +378,16 @@ const PAGE = 50;
       background: var(--mat-sys-surface-container);
       border: 1px solid var(--mat-sys-outline-variant);
     }
+    .git-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin: 8px 0;
+    }
+    .wide {
+      width: 100%;
+    }
     .summary h4 {
       margin: 0 0 6px;
       font: var(--mat-sys-title-small);
@@ -379,6 +477,23 @@ export class SourceDetailComponent {
 
   async download(s: SourceDto): Promise<void> {
     await this.act(() => this.api.download(s));
+  }
+
+  protected readonly intervals = GIT_INTERVALS;
+
+  lines(text: string): string[] {
+    return text
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l);
+  }
+
+  async sync(s: SourceDto): Promise<void> {
+    await this.act(() => this.api.sync(s.id), t('Sync queued'));
+  }
+
+  async saveGit(s: SourceDto, settings: GitSettings): Promise<void> {
+    await this.act(() => this.api.updateGit(s.id, settings), t('Repository settings saved'));
   }
 
   async reindex(s: SourceDto): Promise<void> {

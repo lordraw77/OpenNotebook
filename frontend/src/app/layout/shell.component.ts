@@ -272,6 +272,7 @@ export class ShellComponent {
 
   protected readonly nav: NavItem[] = [
     { link: '/workbench', icon: 'forum', label: t('Workbench') },
+    { link: '/history', icon: 'history', label: t('History') },
     { link: '/upload', icon: 'upload_file', label: t('Upload') },
     { link: '/wiki', icon: 'hub', label: t('Wiki') },
     { link: '/status', icon: 'monitor_heart', label: t('RAG Status') },

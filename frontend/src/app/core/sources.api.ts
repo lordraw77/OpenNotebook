@@ -1,7 +1,7 @@
 import { HttpClient, HttpEvent, HttpEventType, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, filter, firstValueFrom, map } from 'rxjs';
-import { t } from './i18n';
+import { i18nKey, t } from './i18n';
 
 // Types mirroring backend/src/opennotebook/api/{sources,notes,ingestion_status}.py
 
@@ -65,9 +65,46 @@ export interface SourceDto {
     crawl?: { root: string; depth_left: number; max_pages: number; links_followed?: number };
     /** `pdf`: an office document converted to PDF (page anchors, PDF viewer). */
     rendition?: 'pdf';
+    /** Git repository source: where it comes from, the last sync and its schedule. */
+    git?: GitInfo;
   };
   created_at: string;
   indexed_at: string | null;
+}
+
+export const GIT_INTERVALS = [
+  { minutes: 0, label: i18nKey('Only when I ask') },
+  { minutes: 15, label: i18nKey('Every 15 minutes') },
+  { minutes: 60, label: i18nKey('Every hour') },
+  { minutes: 360, label: i18nKey('Every 6 hours') },
+  { minutes: 1440, label: i18nKey('Every day') },
+];
+
+export interface GitInfo {
+  url: string;
+  branch: string | null;
+  username: string | null;
+  /** 0 = only when asked. */
+  sync_interval_minutes: number;
+  include: string[];
+  exclude: string[];
+  token_set: boolean;
+  commit?: string;
+  synced_at?: string;
+  added?: number;
+  changed?: number;
+  removed?: number;
+  files?: number;
+  skipped_count?: number;
+}
+
+export interface GitSettings {
+  branch?: string | null;
+  token?: string | null;
+  username?: string | null;
+  sync_interval_minutes?: number;
+  exclude?: string[];
+  include?: string[];
 }
 
 export interface UploadResult {
@@ -332,6 +369,22 @@ export class SourcesApi {
         max_pages: maxPages,
       }),
     );
+  }
+
+  /** Adds a git repository (http/https, host allow-listed on the server); the worker clones and indexes it. */
+  addGit(notebookId: string, url: string, settings: GitSettings): Promise<SourceDto> {
+    return firstValueFrom(
+      this.http.post<SourceDto>(`/api/nodes/${notebookId}/git`, { url, ...settings }),
+    );
+  }
+
+  updateGit(id: string, settings: GitSettings): Promise<SourceDto> {
+    return firstValueFrom(this.http.patch<SourceDto>(`/api/sources/${id}/git`, settings));
+  }
+
+  /** Fetch the branch now and index what changed. */
+  sync(id: string): Promise<SourceDto> {
+    return firstValueFrom(this.http.post<SourceDto>(`/api/sources/${id}/sync`, {}));
   }
 
   search(

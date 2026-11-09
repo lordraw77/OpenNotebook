@@ -21,6 +21,12 @@ export const routes: Routes = [
           import('./pages/workbench/workbench.component').then((m) => m.WorkbenchComponent),
       },
       {
+        path: 'history',
+        title: 'History · OpenNotebook',
+        loadComponent: () =>
+          import('./pages/history/history.component').then((m) => m.HistoryComponent),
+      },
+      {
         path: 'upload',
         title: 'Upload · OpenNotebook',
         loadComponent: () =>

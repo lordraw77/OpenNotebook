@@ -320,6 +320,8 @@ def cmd_worker(args: argparse.Namespace) -> int:
     from opennotebook.worker import QUEUES, celery_app
 
     argv = ["worker", "--loglevel=INFO", f"--queues={','.join(QUEUES)}", *args.celery_args]
+    if celery_app.conf.beat_schedule:  # scheduled git syncs; the schedule file goes to the writable /tmp
+        argv += ["--beat", f"--schedule={tempfile.gettempdir()}/celerybeat-schedule"]
     celery_app.worker_main(argv)
     return 0
 

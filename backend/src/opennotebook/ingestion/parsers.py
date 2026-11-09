@@ -26,7 +26,7 @@ class ParseError(ValueError):
 
 @dataclass(frozen=True)
 class Sniffed:
-    format: str  # pdf | docx | office | markdown | text | html | code | image | zip | tar
+    format: str  # pdf | docx | xlsx | pptx | office | markdown | text | html | code | image | zip | tar
     mime_type: str
     kind: str = "file"  # SourceKind value
     language: str | None = None
@@ -95,6 +95,13 @@ def converter_enabled() -> bool:
     return bool(get_settings().converter_url)
 
 
+def native_office() -> bool:
+    """XLSX and PPTX are read directly (sheet/row and slide anchors, no converter needed) unless disabled."""
+    from opennotebook.config import get_settings
+
+    return get_settings().office_native
+
+
 def _office(extension: str, mime: str) -> Sniffed:
     if not converter_enabled():
         raise UnsupportedContent(
@@ -124,6 +131,8 @@ def sniff(data: bytes, filename: str) -> Sniffed:
             )
         for marker, (extension, mime) in _OOXML.items():
             if marker in names:
+                if native_office():
+                    return Sniffed(extension, mime, extension=extension)
                 return _office(extension, mime)
         if odf in _ODF:
             return _office(_ODF[odf], odf)
@@ -191,6 +200,10 @@ def parse(data: bytes, fmt: str, title: str) -> ParsedDocument:
                 return parse_code(decode_text(data), detect_language(title, data[:200]), title)
             case "docx":
                 return parse_docx(data, title)
+            case "xlsx":
+                return parse_xlsx(data, title)
+            case "pptx":
+                return parse_pptx(data, title)
             case "markdown":
                 return parse_markdown(decode_text(data), title)
             case "text":
@@ -340,6 +353,111 @@ def parse_docx(data: bytes, title: str) -> ParsedDocument:
             b.block(text, "paragraph")
     flush_list()
     return ensure_content(b.build())
+
+
+# --- XLSX / PPTX (read directly, without the converter) -----------------------------------------
+
+XLSX_ROWS_PER_BLOCK = 25
+XLSX_MAX_CELLS = 500_000
+XLSX_MAX_SHEETS = 64
+OOXML_MAX_UNCOMPRESSED = 300 * 1024 * 1024
+
+
+def _check_ooxml_size(data: bytes) -> None:
+    """Refuse zip bombs before handing the package to a parser."""
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        total = sum(i.file_size for i in z.infolist())
+    if total > OOXML_MAX_UNCOMPRESSED:
+        raise ParseError("The document expands to more than 300 MB")
+
+
+def _cell_text(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return str(value).replace("\r", " ").replace("\n", " ").strip()
+
+
+def parse_xlsx(data: bytes, title: str) -> ParsedDocument:
+    """One heading per visible sheet, then blocks of rows repeating the header row (`Sales - rows 2-26`)."""
+    import openpyxl
+
+    _check_ooxml_size(data)
+    wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    b = DocumentBuilder(title)
+    cells = 0
+    sheets = [ws for ws in wb.worksheets if ws.sheet_state == "visible"]
+    for ws in sheets[:XLSX_MAX_SHEETS]:
+        rows: list[tuple[int, str]] = []
+        for index, row in enumerate(ws.iter_rows(values_only=True), start=1):
+            values = [_cell_text(v) for v in row]
+            while values and not values[-1]:
+                values.pop()
+            if not values:
+                continue
+            cells += len(values)
+            if cells > XLSX_MAX_CELLS:
+                b.doc.warnings.append(f"Sheet '{ws.title}' truncated: more than {XLSX_MAX_CELLS} cells")
+                break
+            rows.append((index, " | ".join(values)))
+        _sheet_blocks(b, ws.title, rows)
+        if cells > XLSX_MAX_CELLS:
+            break
+    if len(sheets) > XLSX_MAX_SHEETS:
+        b.doc.warnings.append(f"Only the first {XLSX_MAX_SHEETS} sheets were read")
+    wb.close()
+    return ensure_content(b.build())
+
+
+def _sheet_blocks(b: DocumentBuilder, name: str, rows: list[tuple[int, str]]) -> None:
+    if not rows:
+        return
+    b.heading(name, 1)
+    header_row, header = rows[0]
+    for start in range(0, len(rows), XLSX_ROWS_PER_BLOCK):
+        part = rows[start : start + XLSX_ROWS_PER_BLOCK]
+        lines = [text for _, text in part]
+        if part[0][0] != header_row:
+            lines.insert(0, header)  # every block carries the column names
+        b.block(f"{name} - rows {part[0][0]}-{part[-1][0]}\n" + "\n".join(lines), "table")
+
+
+def parse_pptx(data: bytes, title: str) -> ParsedDocument:
+    """One heading per slide (page = slide number): text and tables in reading order, then speaker notes."""
+    from pptx import Presentation
+
+    _check_ooxml_size(data)
+    prs = Presentation(io.BytesIO(data))
+    b = DocumentBuilder(prs.core_properties.title or title)
+    count = 0
+    for number, slide in enumerate(prs.slides, start=1):
+        count = number
+        shapes = sorted(slide.shapes, key=lambda s: (s.top or 0, s.left or 0))
+        slide_title = ""
+        title_id = None
+        if slide.shapes.title is not None and slide.shapes.title.has_text_frame:
+            title_id = slide.shapes.title.shape_id
+            slide_title = slide.shapes.title.text_frame.text.strip().replace("\n", " ")
+        b.heading(f"Slide {number}" + (f": {slide_title}" if slide_title else ""), 1, page=number)
+        for shape in shapes:
+            if shape.has_text_frame and shape.shape_id != title_id:
+                lines = [p.text.strip() for p in shape.text_frame.paragraphs if p.text.strip()]
+                if lines:
+                    b.block("\n".join(lines), "paragraph", page=number)
+            elif getattr(shape, "has_table", False) and shape.has_table:
+                rows = [
+                    " | ".join(c.text.strip().replace("\n", " ") for c in row.cells)
+                    for row in shape.table.rows
+                ]
+                b.block("\n".join(rows), "table", page=number)
+        if slide.has_notes_slide and slide.notes_slide.notes_text_frame is not None:
+            notes = slide.notes_slide.notes_text_frame.text.strip()
+            if notes:
+                b.block(f"Notes: {notes}", "paragraph", page=number)
+    doc = b.build()
+    doc.page_count = count or None
+    return ensure_content(doc)
 
 
 # --- PDF -----------------------------------------------------------------------------------------

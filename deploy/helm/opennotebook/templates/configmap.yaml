@@ -41,4 +41,5 @@ data:
   CONVERTER_URL: {{ printf "http://%s:8080" (include "on.host" (list . "converter")) | quote }}
   CONVERTER_TIMEOUT_SECONDS: {{ .Values.converter.timeoutSeconds | toString | quote }}
   {{- end }}
+  GIT_ALLOWED_HOSTS: {{ .Values.git.allowedHosts | quote }}
   WORKER_METRICS_PORT: "9101"

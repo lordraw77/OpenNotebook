@@ -94,6 +94,16 @@ async function loadPdfJs() {
         <mat-icon>info</mat-icon>
       </button>
     </header>
+    @if (isPdf() && spanPages().length > 1) {
+      <div class="span">
+        {{ 'This passage spans pages' | t }}
+        @for (p of spanPages(); track p) {
+          <button type="button" class="pg" [class.on]="p === page()" (click)="page.set(p)">
+            {{ p }}
+          </button>
+        }
+      </div>
+    }
     @if (loading()) {
       <mat-progress-bar mode="indeterminate"></mat-progress-bar>
     }
@@ -162,6 +172,29 @@ async function loadPdfJs() {
     }
     .spacer {
       flex: 1;
+    }
+    .span {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      font: var(--mat-sys-label-medium);
+      background: var(--mat-sys-surface-container);
+      border-bottom: 1px solid var(--mat-sys-outline-variant);
+    }
+    .pg {
+      min-width: 28px;
+      padding: 2px 8px;
+      border-radius: 12px;
+      border: 1px solid var(--mat-sys-outline-variant);
+      background: transparent;
+      color: var(--mat-sys-on-surface);
+      cursor: pointer;
+    }
+    .pg.on {
+      background: var(--mat-sys-primary-container);
+      color: var(--mat-sys-on-primary-container);
+      border-color: transparent;
     }
     .pager {
       font: var(--mat-sys-label-large);
@@ -244,6 +277,14 @@ export class SourceViewerComponent {
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
   readonly location = computed(() => citationLocation(this.citation()));
+  /** Pages a passage covers (a chunk can run over a page break); the pager opens the first one. */
+  readonly spanPages = computed(() => {
+    const c = this.citation();
+    const start = c.page_start;
+    const end = c.page_end ?? start;
+    if (!start || !end || end <= start) return [];
+    return Array.from({ length: Math.min(end - start + 1, 12) }, (_, i) => start + i);
+  });
   readonly isPdf = computed(() => this.citation().mime_type === 'application/pdf');
 
   // PDF state

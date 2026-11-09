@@ -214,7 +214,7 @@ async def test_us08_embedding_change_keeps_search_live_until_atomic_switch(
     } == {"radio.md", "manual.pdf"}
     assert [c["model"] for c in embed_calls] == ["mistral/mistral-embed"]
 
-    # a source added during the change is embedded with both models: searchable right away
+    # a source added during the change is embedded with the new model only, and searchable right away
     embed_calls.clear()
     await upload(
         client,
@@ -223,10 +223,13 @@ async def test_us08_embedding_change_keeps_search_live_until_atomic_switch(
         [("extra.md", b"# Extra\n\nThe antenna gain is five dBi.\n")],
     )
     await run_jobs(session, jobs)
-    assert {c["model"] for c in embed_calls} == {"mistral/other-embed", "mistral/mistral-embed"}
+    assert {c["model"] for c in embed_calls} == {"mistral/other-embed"}  # never embedded twice
+    embed_calls.clear()
     assert "extra.md" in {
         h["source_title"] for h in await search(client, admin_headers, world.wifi["id"], "antenna gain dBi")
     }
+    # the search embeds the query with both models and fuses the two indexes
+    assert {c["model"] for c in embed_calls} == {"mistral/other-embed", "mistral/mistral-embed"}
 
     # re-index: after the first source the old index still serves everything
     r = await client.post(f"/api/ingestion/projects/{project_id}/reindex", headers=admin_headers)
@@ -235,7 +238,7 @@ async def test_us08_embedding_change_keeps_search_live_until_atomic_switch(
     jobs.remove(first)
     embed_calls.clear()
     await run_jobs(session, [first])
-    assert {c["model"] for c in embed_calls} == {"mistral/other-embed"}  # unchanged chunks keep old vectors
+    assert {c["model"] for c in embed_calls} == {"mistral/other-embed"}
     session.expire_all()
     assert (await session.get(ProjectSettings, project_id)).embedding_model_id == old_model
     titles = {

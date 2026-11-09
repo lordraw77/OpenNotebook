@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     converter_url: str | None = None
     converter_timeout_seconds: float = 180
     convert_docx: bool = True
+    # XLSX and PPTX are read directly (sheet/row and slide anchors, no converter needed). false sends them to
+    # the converter instead (PDF pages and the PDF viewer, needs the converter).
+    office_native: bool = True
 
     # Images and scanned PDF pages
     image_max_pixels: int = 50_000_000
@@ -64,6 +67,16 @@ class Settings(BaseSettings):
     web_max_redirects: int = 5
     # allow private, loopback and link-local addresses (intranet sites); off = SSRF protection
     web_allow_private: bool = False
+
+    # Git repository sources (GitLab, GitHub, any http(s) git server). Empty allow-list = feature off.
+    # Comma-separated hosts, with the port when not default (e.g. "gitlab.lan,git.example.com:8080").
+    git_allowed_hosts: str = ""
+    git_timeout_seconds: int = 300
+    git_max_files: int = 20000
+    # a repository larger than this (sum of the files read) is refused
+    git_max_repo_mb: int = 1024
+    # the worker checks for repositories whose schedule is due every minute
+    git_sync_scheduler: bool = True
     web_crawl_max_depth: int = 2
     web_crawl_max_pages: int = 50
     web_user_agent: str = "OpenNotebook/0.3 (self-hosted knowledge workspace)"
@@ -91,7 +104,9 @@ class Settings(BaseSettings):
 
     # Deep research mode
     research_max_sub_questions: int = 5
-    research_max_passages: int = 24
+    research_max_passages: int = 30
+    # the model reads what was found and may ask for more searches, this many times (0 = never)
+    research_max_rounds: int = 2
     research_max_tokens: int = 4096
 
     # Grounded chat
@@ -103,6 +118,9 @@ class Settings(BaseSettings):
     chat_max_per_source: int = 4
     # previous messages sent with a question
     chat_history_messages: int = 6
+    # a model rewrites follow-up questions into standalone search queries (needs a previous message)
+    chat_rewrite_followups: bool = True
+    chat_rewrite_timeout_s: float = 20
     chat_max_tokens: int = 2048
     # interactive rerank call; on timeout or error the fusion order is kept
     rerank_timeout_s: int = 20

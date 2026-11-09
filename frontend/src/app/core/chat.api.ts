@@ -15,6 +15,17 @@ export interface ConversationDto {
   updated_at: string;
 }
 
+/** One row of the chat history (all scopes). */
+export interface HistoryItem extends ConversationDto {
+  scope_name: string;
+  scope_kind: string;
+  message_count: number;
+  first_question: string | null;
+  /** Where a search matched, when the history was searched. */
+  match: string | null;
+  research: boolean;
+}
+
 export interface Attempt {
   model: string;
   ok?: boolean;
@@ -39,6 +50,8 @@ export interface MessageDto {
     warnings?: string[];
     mode?: 'chat' | 'research';
     plan?: string[];
+    /** The standalone query a model wrote for a follow-up question. */
+    rewritten_query?: string;
   };
   model_label: string | null;
   attempts: Attempt[];
@@ -53,13 +66,16 @@ export type ChatEvent =
   | {
       event: 'status';
       data: {
-        stage: 'retrieving' | 'generating' | 'planning' | 'researching';
+        stage:
+          'retrieving' | 'generating' | 'planning' | 'researching' | 'rewriting' | 'reflecting';
+        round?: number;
         step?: number;
         of?: number;
         question?: string;
       };
     }
-  | { event: 'plan'; data: { sub_questions: string[]; model: string | null } }
+  | { event: 'plan'; data: { sub_questions: string[]; model?: string | null; round?: number } }
+  | { event: 'query'; data: { text: string; model: string | null } }
   | {
       event: 'sources';
       data: {
@@ -99,6 +115,32 @@ export class ChatApi {
   list(scopeId: string): Promise<ConversationDto[]> {
     const params = new HttpParams().set('scope_id', scopeId);
     return firstValueFrom(this.http.get<ConversationDto[]>('/api/conversations', { params }));
+  }
+
+  /** Every conversation of the user, newest first; `q` searches titles and message text. */
+  async history(
+    opts: { q?: string; scopeId?: string | null; offset?: number; limit?: number } = {},
+  ): Promise<{ items: HistoryItem[]; total: number }> {
+    let params = new HttpParams().set('limit', opts.limit ?? 50).set('offset', opts.offset ?? 0);
+    if (opts.q?.trim()) params = params.set('q', opts.q.trim());
+    if (opts.scopeId) params = params.set('scope_id', opts.scopeId);
+    const res = await firstValueFrom(
+      this.http.get<HistoryItem[]>('/api/conversations/history', { params, observe: 'response' }),
+    );
+    return { items: res.body ?? [], total: Number(res.headers.get('X-Total-Count') ?? 0) };
+  }
+
+  /** Downloads a conversation as a Markdown file. */
+  async exportMarkdown(id: string, title: string): Promise<void> {
+    const text = await firstValueFrom(
+      this.http.get(`/api/conversations/${id}/export`, { responseType: 'text' }),
+    );
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${title.replace(/[^\w -]+/g, '_').slice(0, 60) || 'conversation'}.md`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   create(scopeId: string): Promise<ConversationDto> {
