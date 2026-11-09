@@ -104,6 +104,35 @@ async def ingest_source(
     reason: str = "upload",
     attempt: int = 1,
 ) -> SourceStatus:
+    """Parse, chunk and embed one source; records job metrics (see opennotebook.metrics)."""
+    import time
+
+    from opennotebook.metrics import INGESTION_DURATION, INGESTION_JOBS
+
+    source = await session.get(Source, source_id)
+    kind = source.kind.value if source is not None else "unknown"
+    start = time.perf_counter()
+    status = "retry"
+    try:
+        result = await _ingest_source(
+            session, source_id, store=store, index=index, reason=reason, attempt=attempt
+        )
+        status = result.value
+        return result
+    finally:
+        INGESTION_JOBS.labels(kind, status).inc()
+        INGESTION_DURATION.labels(kind).observe(time.perf_counter() - start)
+
+
+async def _ingest_source(
+    session: AsyncSession,
+    source_id: uuid.UUID,
+    *,
+    store: BlobStore,
+    index: VectorIndex,
+    reason: str = "upload",
+    attempt: int = 1,
+) -> SourceStatus:
     settings = get_settings()
     source = await session.get(Source, source_id)
     if source is None or source.deleted_at is not None:

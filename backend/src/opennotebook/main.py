@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
@@ -34,6 +35,52 @@ REQUESTS = Counter("opennotebook_http_requests_total", "HTTP requests", ["method
 LATENCY = Histogram("opennotebook_http_request_duration_seconds", "HTTP request latency", ["method", "route"])
 
 
+async def _refresh_gauges() -> None:
+    """Queue depths (Redis lists of the Celery queues) and sources by status, every 30 s."""
+    import asyncio
+
+    from redis.asyncio import from_url
+    from sqlalchemy import func, select
+
+    from opennotebook.db import get_sessionmaker
+    from opennotebook.metrics import QUEUE_DEPTH, SOURCES
+    from opennotebook.models import Source, SourceStatus
+    from opennotebook.worker import QUEUES
+
+    redis = from_url(get_settings().redis_url_with_auth)
+    while True:
+        try:
+            for queue in QUEUES:
+                QUEUE_DEPTH.labels(queue).set(await redis.llen(queue))
+            async with get_sessionmaker()() as session:
+                counts = dict(
+                    (
+                        await session.execute(
+                            select(Source.status, func.count())
+                            .where(Source.deleted_at.is_(None))
+                            .group_by(Source.status)
+                        )
+                    ).all()
+                )
+            for status in SourceStatus:
+                SOURCES.labels(status.value).set(counts.get(status, 0))
+        except Exception:  # noqa: BLE001 - metrics must never break the api
+            log.warning("gauge refresh failed", exc_info=True)
+        await asyncio.sleep(30)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):  # type: ignore[no-untyped-def]
+    import asyncio
+
+    task = None
+    if get_settings().app_env != "test":
+        task = asyncio.create_task(_refresh_gauges())
+    yield
+    if task is not None:
+        task.cancel()
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging(settings.log_level)
@@ -41,6 +88,7 @@ def create_app() -> FastAPI:
         settings.validate_for_runtime()
 
     app = FastAPI(
+        lifespan=lifespan,
         title="OpenNotebook API",
         version=__version__,
         docs_url="/api/docs",
@@ -71,6 +119,10 @@ def create_app() -> FastAPI:
                 },
             )
         return response
+
+    from opennotebook.tracing import configure_tracing
+
+    configure_tracing("api", app)
 
     for router in (
         health.router,

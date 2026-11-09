@@ -78,6 +78,16 @@ release: build check-no-models ## Push images (VERSION and latest): make release
 	  docker push $(REGISTRY)/opennotebook-$$img:$(VERSION) && docker push $(REGISTRY)/opennotebook-$$img:latest; \
 	done
 
+backup: ## Back up database, files, vector index and .env into ./backups (scripts/backup.sh)
+	@COMPOSE="$(COMPOSE)" scripts/backup.sh
+
+restore: ## Restore a backup: make restore BACKUP=backups/opennotebook-<stamp> (replaces all data)
+	@test -n "$(BACKUP)" || (echo "Set BACKUP=backups/opennotebook-<stamp>" && exit 1)
+	@COMPOSE="$(COMPOSE)" scripts/restore.sh $(BACKUP)
+
+sync-deploy: ## Render observability config into deploy/production/docker-compose.yml
+	@python3 scripts/sync_observability.py
+
 hub-publish: ## Build, check, push to Docker Hub and update the repository overviews (scripts/publish-dockerhub.sh)
 	@scripts/publish-dockerhub.sh $(VERSION) $(REGISTRY)
 

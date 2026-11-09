@@ -426,6 +426,11 @@ async def extracted_text(source_id: uuid.UUID, user: CurrentUser, session: Sessi
 
 @router.post("/search", response_model=SearchOut)
 async def search(body: SearchIn, user: CurrentUser, session: SessionDep) -> SearchOut:
+    from opennotebook.ratelimit import too_many_attempts
+
+    limit = get_settings().search_rate_limit_per_minute
+    if limit and await too_many_attempts(f"search:{user.id}", limit, 60):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many searches: wait a minute and retry")
     scope = await get_search_scope(session, user, body.scope_id)
     try:
         hits, model_label = await search_scope(

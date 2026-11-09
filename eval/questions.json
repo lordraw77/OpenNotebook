@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "notes": "Fixed evaluation set over eval/corpus (fictional content). Types: fact (one source), multi_hop (needs two sources), out_of_domain (the corpus has no answer: the assistant must abstain).",
+  "questions": [
+    {"id": "f1", "type": "fact", "question": "How do I factory reset the Nimbus AP-9?", "expected_sources": ["nimbus-ap9-manual.md"], "expected_terms": ["15 seconds"]},
+    {"id": "f2", "type": "fact", "question": "Which PoE standard does the AP-9 need?", "expected_sources": ["nimbus-ap9-manual.md"], "expected_terms": ["802.3bt"]},
+    {"id": "f3", "type": "fact", "question": "Where is the default administrator password?", "expected_sources": ["nimbus-ap9-manual.md"], "expected_terms": ["label"]},
+    {"id": "f4", "type": "fact", "question": "What does the roaming assistant do and in which firmware was it added?", "expected_sources": ["nimbus-ap9-manual.md"], "expected_terms": ["7.4"]},
+    {"id": "f5", "type": "fact", "question": "On which port is the management interface served?", "expected_sources": ["nimbus-ap9-manual.md"], "expected_terms": ["8443"]},
+    {"id": "f6", "type": "fact", "question": "Until when is WPA2 allowed on guest networks?", "expected_sources": ["security-policy.md"], "expected_terms": ["2026"]},
+    {"id": "f7", "type": "fact", "question": "Who approves exceptions to the wireless security policy?", "expected_sources": ["security-policy.md"], "expected_terms": ["Chief Information Security Officer"]},
+    {"id": "f8", "type": "fact", "question": "How many failed SAE confirmations block a station, and for how long?", "expected_sources": ["wpa3.c"], "expected_terms": ["5", "300"]},
+    {"id": "f9", "type": "fact", "question": "Qual è l'indirizzo del controller di rete?", "expected_sources": ["guida-installazione.md"], "expected_terms": ["10.90.0.10"]},
+    {"id": "f10", "type": "fact", "question": "A quali porte vanno collegati gli access point di Milano?", "expected_sources": ["guida-installazione.md"], "expected_terms": ["rack B"]},
+    {"id": "m1", "type": "multi_hop", "question": "The policy requires WPA3 with SAE: which firmware function performs the SAE exchange and where is WPA3 enabled in the access point settings?", "expected_sources": ["security-policy.md", "wpa3.c", "nimbus-ap9-manual.md"], "expected_terms": ["sae_handshake"]},
+    {"id": "m2", "type": "multi_hop", "question": "Can a new AP-9 running firmware 7.2 be connected to the production network?", "expected_sources": ["security-policy.md", "guida-installazione.md"], "expected_terms": ["7.4"]},
+    {"id": "m3", "type": "multi_hop", "question": "Why does the 6 GHz radio refuse WPA2, and what does the firmware require for 6 GHz authentication?", "expected_sources": ["nimbus-ap9-manual.md", "wpa3.c"], "expected_terms": ["hash-to-element"]},
+    {"id": "m4", "type": "multi_hop", "question": "From which VLAN must the AP-9 management interface on port 8443 be reachable?", "expected_sources": ["security-policy.md", "nimbus-ap9-manual.md"], "expected_terms": ["900"]},
+    {"id": "o1", "type": "out_of_domain", "question": "What is the price of the Nimbus AP-9 in euros?", "expected_sources": []},
+    {"id": "o2", "type": "out_of_domain", "question": "Who won the 2018 FIFA World Cup?", "expected_sources": []},
+    {"id": "o3", "type": "out_of_domain", "question": "How do I configure a VPN tunnel on the AP-9?", "expected_sources": []},
+    {"id": "o4", "type": "out_of_domain", "question": "Qual è la capitale dell'Australia?", "expected_sources": []}
+  ]
+}

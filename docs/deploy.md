@@ -106,14 +106,24 @@ line; take a backup before upgrading.
 
 ## 7. Backup and restore
 
-| Data | How |
-|---|---|
-| PostgreSQL (`pg-data`) | `docker compose exec -T postgres pg_dump -U opennotebook opennotebook \| gzip > db.sql.gz` |
-| Files (`blob-data`) | stop the stack or snapshot the volume; e.g. `docker run --rm -v opennotebook_blob-data:/d -v $PWD:/b alpine tar czf /b/blobs.tgz -C /d .` |
-| `APP_ENCRYPTION_KEY` (and the whole `.env`) | store in your secret manager |
-| Vector index (`qdrant-data`) | optional: rebuildable with **RAG Status → Re-index** (costs embedding calls) |
+Download the scripts once (they are also in the release bundle):
+
+```bash
+curl -fsSLO $BASE/scripts/backup.sh && curl -fsSLO $BASE/scripts/restore.sh && chmod +x backup.sh restore.sh
+./backup.sh -o /srv/backups            # database, original files, vector index, .env + manifest with checksums
+./restore.sh /srv/backups/opennotebook-<stamp>     # replaces all data (asks for confirmation)
+```
+
+The database is dumped online; SeaweedFS and Qdrant are paused for the seconds their volumes are copied.
+Backups contain `.env` in clear (secrets): store them encrypted and off the host. Restoring into a new host
+works as long as the target `.env` holds the backup's `APP_ENCRYPTION_KEY`. Details, scheduling and the
+consistency check (`reconcile`): [operations/runbooks.md](operations/runbooks.md#routine-procedures).
 
 ## 8. Operations
+
+Monitoring (metrics, dashboard, alerts, traces): [operations/monitoring.md](operations/monitoring.md).
+SLOs: [operations/slo.md](operations/slo.md). Incident runbooks: [operations/runbooks.md](operations/runbooks.md).
+
 
 - Scale ingestion: `docker compose up -d --scale worker=3`.
 - Logs: JSON on stdout, rotated by Docker (20 MB × 5 per container); `docker compose logs -f api worker`.

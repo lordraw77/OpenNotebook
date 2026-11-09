@@ -206,17 +206,22 @@ class ModelGateway:
             raise GatewayError("The model's provider is not allowed by this project's provider policy")
         return resolved
 
-    async def _run(self, chain: list[ResolvedModel], call) -> CallResult:  # type: ignore[no-untyped-def]
+    async def _run(self, chain: list[ResolvedModel], call, phase: str = "other") -> CallResult:  # type: ignore[no-untyped-def]
+        from opennotebook.metrics import PROVIDER_CALLS, PROVIDER_LATENCY
+
         attempts: list[dict] = []
         for resolved in chain:
             start = time.perf_counter()
             try:
                 value = await call(resolved)
             except Exception as exc:  # noqa: BLE001 - any provider failure moves to the next model
+                PROVIDER_CALLS.labels(resolved.provider.name, phase, "error").inc()
                 attempts.append(
                     {"model": resolved.label, "error": exc.__class__.__name__, "detail": _safe_detail(exc)}
                 )
                 continue
+            PROVIDER_CALLS.labels(resolved.provider.name, phase, "ok").inc()
+            PROVIDER_LATENCY.labels(resolved.provider.name, phase).observe(time.perf_counter() - start)
             latency = int((time.perf_counter() - start) * 1000)
             attempts.append({"model": resolved.label, "ok": True, "latency_ms": latency})
             return CallResult(value=value, used=resolved, latency_ms=latency, attempts=attempts)
@@ -242,7 +247,7 @@ class ModelGateway:
                 **litellm_kwargs(r),
             )
 
-        return await self._run(chain, call)
+        return await self._run(chain, call, phase.value)
 
     async def embed(
         self,
@@ -273,7 +278,7 @@ class ModelGateway:
             )
             return [d["embedding"] for d in resp.data]
 
-        return await self._run(chain, call)
+        return await self._run(chain, call, "embedding")
 
     async def has_chain(self, phase: ModelPhase, project_id: uuid.UUID | None = None) -> bool:
         try:
@@ -319,7 +324,7 @@ class ModelGateway:
             text = (resp.choices[0].message.content or "").strip()
             return "" if text.upper().strip(" .") == "NO TEXT" else text
 
-        return await self._run(chain, call)
+        return await self._run(chain, call, phase.value)
 
     async def describe_image(self, image_data_uri: str, project_id: uuid.UUID | None = None) -> CallResult:
         import litellm
@@ -344,7 +349,7 @@ class ModelGateway:
             )
             return (resp.choices[0].message.content or "").strip()
 
-        return await self._run(chain, call)
+        return await self._run(chain, call, "vision")
 
     async def rerank(
         self,
@@ -378,7 +383,7 @@ class ModelGateway:
             )
             return [(int(x["index"]), float(x["relevance_score"])) for x in resp.results]
 
-        return await self._run(chain, call)
+        return await self._run(chain, call, "rerank")
 
     async def stream_chat(
         self,
@@ -396,6 +401,8 @@ class ModelGateway:
         """
         import litellm
 
+        from opennotebook.metrics import PROVIDER_CALLS, PROVIDER_LATENCY
+
         chain = await self.resolve(ModelPhase.chat, project_id, selected_model_id)
         attempts: list[dict] = []
         for resolved in chain:
@@ -412,10 +419,13 @@ class ModelGateway:
                 iterator = stream.__aiter__()
                 first, usage = await asyncio.wait_for(_first_text(iterator), timeout=first_token_timeout_s)
             except Exception as exc:  # noqa: BLE001 - try the next model of the chain
+                PROVIDER_CALLS.labels(resolved.provider.name, "chat", "error").inc()
                 attempts.append(
                     {"model": resolved.label, "error": exc.__class__.__name__, "detail": _safe_detail(exc)}
                 )
                 continue
+            PROVIDER_CALLS.labels(resolved.provider.name, "chat", "ok").inc()
+            PROVIDER_LATENCY.labels(resolved.provider.name, "chat").observe(time.perf_counter() - start)
             attempts.append({"model": resolved.label, "ok": True})
             yield ChatEvent("provider", used=resolved, attempts=attempts)
             if first:

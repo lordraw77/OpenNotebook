@@ -45,6 +45,12 @@ dependencies = [
   "tree-sitter-ruby==0.23.1",
   "tree-sitter-rust==0.24.2",
   "tree-sitter-typescript==0.23.2",
+  # M6: optional OpenTelemetry traces (active only when OTEL_EXPORTER_OTLP_ENDPOINT is set)
+  "opentelemetry-sdk==1.45.1",
+  "opentelemetry-exporter-otlp-proto-http==1.45.1",
+  "opentelemetry-instrumentation-fastapi==0.66b1",
+  "opentelemetry-instrumentation-httpx==0.66b1",
+  "opentelemetry-instrumentation-celery==0.66b1",
 ]
 
 [project.scripts]

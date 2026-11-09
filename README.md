@@ -7,13 +7,14 @@ Upload documents, source code, archives, images, web pages and notes, organize t
 **only** from the sources in the selected scope. Every claim cites its source (`[Source 1, p. 4]`), and clicking
 a citation highlights the exact passage.
 
-> **Status: milestones M0–M5 complete** (foundations, ingestion, grounded chat, extended ingestion, knowledge
-> graph and wiki, administration and deep research). Runs today: the packaged stack; local and single sign-on
+> **Status: milestones M0–M6 complete** (foundations, ingestion, grounded chat, extended ingestion, knowledge
+> graph and wiki, administration and deep research, production readiness). Runs today: the packaged stack; local and single sign-on
 > (OIDC) login; the hierarchy shared with users or groups, with on/off switches; nine model providers with a
 > per-project provider policy; model chains per phase (global and per project); indexing of documents, code,
 > archives, images, scanned PDFs and web pages; summaries; a knowledge graph with wiki pages; scoped hybrid search;
 > grounded chat and a deep research mode with validated citations; zero-downtime embedding model changes.
-> Production hardening and operations (M6) are next. See the [roadmap](docs/analysis/05-roadmap-and-decisions.md).
+> Operations: metrics, dashboards, alerts, traces, SLOs, runbooks, backup/restore and an offline install
+> bundle. See the [roadmap](docs/analysis/05-roadmap-and-decisions.md).
 
 ## Features
 
@@ -41,6 +42,9 @@ a citation highlights the exact passage.
 | Per-project provider policy (e.g. "LAN only"), enforced on every model call | ✅ M5 |
 | Embedding model change with no search downtime (old index serves until the re-index completes, then atomic switch) | ✅ M5 |
 | Deep research mode: planned sub-questions, per-step retrieval, structured cited report | ✅ M5 |
+| Observability: Prometheus metrics (api + worker), Grafana dashboard, alert rules, OpenTelemetry traces (Jaeger) | ✅ M6 |
+| Operations: backup/restore, consistency check, encryption key rotation, SLOs, runbooks, RAG evaluation set, load test | ✅ M6 |
+| Hardening: per-user rate limits, memory/PID limits, image OS updates, dependency/image scanning and SBOM in CI | ✅ M6 |
 
 ## No models inside
 
@@ -141,7 +145,8 @@ make fmt                                # format everything
 backend/     FastAPI API, Celery worker, model gateway, Alembic migrations, tests
 frontend/    Angular 22 + Angular Material web app, nginx config
 deploy/      Docker Compose: production/ (published images) and compose/ (build from source), observability config
-scripts/     secrets generation, tests, image checks, release bundle, Docker Hub publishing
+scripts/     secrets, tests, image checks, release bundle, Docker Hub publishing, backup/restore, load test, RAG evaluation
+eval/        fixed corpus and questions for the RAG quality evaluation
 docs/        analysis (requirements, architecture, data model, threat model, roadmap), Docker overview
 ```
 
@@ -150,6 +155,7 @@ docs/        analysis (requirements, architecture, data model, threat model, roa
 - [Project analysis](docs/analysis/README.md): requirements, architecture and ADRs, data model, threat model, roadmap
 - [Deployment guide](docs/deploy.md): production deployment from Docker Hub
 - [Docker overview](docs/docker.md): images, services, profiles, volumes, operations
+- [Operations](docs/operations/README.md): SLOs, monitoring, runbooks, security, evaluation, performance
 
 ## License
 

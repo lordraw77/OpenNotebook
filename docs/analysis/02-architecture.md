@@ -355,11 +355,23 @@ backoff up to `INGESTION_MAX_ATTEMPTS`, parse errors fail immediately.
 
 ## 7. Packaging
 
-- One repository, one version: all images are tagged with the same release version (`opennotebook/*:X.Y.Z`) and published to a container registry (GHCR proposed).
+- One repository, one version: all images are tagged with the same release version
+  (`lordraw/opennotebook-{web,api,worker}:X.Y.Z` and `latest`) and published to Docker Hub.
 - Multi-stage Dockerfiles, non-root users, pinned base images by digest, health checks in every image.
-- A single `deploy/compose/docker-compose.yml` with profiles: default (full core stack), `auth` (Keycloak), `observability` (Prometheus + Grafana now; OTel collector, Loki and Tempo in M6). No model-serving service exists in any profile.
+- Two Compose files with the same services and profiles: `deploy/compose/docker-compose.yml` (builds from source)
+  and `deploy/production/docker-compose.yml` (published images, self-contained: the observability configuration
+  is inlined by `make sync-deploy`). Profiles: default (full core stack), `auth` (Keycloak), `observability`
+  (Prometheus with alert rules, Grafana with the overview dashboard, Jaeger for OpenTelemetry traces; all
+  Apache-2.0 or AGPL third-party images, optional). No model-serving service exists in any profile.
 - Images contain no model weights and no ML runtimes (enforced in CI by checking image contents for `torch`, `onnxruntime`, `*.safetensors`, `*.gguf`).
-- Release bundle: `make bundle` produces a tarball (`docker save` of all images + compose + `.env.example`) for hosts without registry access; providers must still be reachable.
+- Release bundle: `make bundle` produces a tarball (`docker save` of the images + deployment Compose file +
+  `.env.example` + secrets/backup/restore scripts + `install.sh`, which starts with `--pull never`) for hosts
+  without registry access; providers must still be reachable. Verified on 2026-11-09 by installing on a host
+  after removing the images.
+- Operations (M6): application metrics (api and worker, multiprocess), optional OpenTelemetry tracing,
+  alert rules and SLOs, backup/restore scripts, `reconcile`, `rotate-encryption-key`, `reset-admin`,
+  memory/PID limits, OS security updates in images, dependency and image scanning in CI
+  ([../operations/README.md](../operations/README.md)).
 - Database migrations run automatically by a one-shot `migrate` service before api/worker start.
 - See [../docker.md](../docker.md) for the operator overview.
 

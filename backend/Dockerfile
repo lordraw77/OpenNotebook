@@ -4,6 +4,8 @@
 ARG PYTHON_IMAGE=python:3.12.16-slim-trixie
 
 FROM ${PYTHON_IMAGE} AS base
+# Security updates of the Debian base (e.g. zlib) published after the base image was built.
+RUN apt-get update && apt-get upgrade -y --no-install-recommends && rm -rf /var/lib/apt/lists/*
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     LITELLM_LOCAL_MODEL_COST_MAP=True \

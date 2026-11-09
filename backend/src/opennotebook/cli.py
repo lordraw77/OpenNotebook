@@ -6,6 +6,8 @@ Commands:
   migrate    apply database migrations
   bootstrap  create the first admin, ensure the storage bucket, import providers/model defaults from env
   reset-admin  create the administrator or reset its password (BOOTSTRAP_ADMIN_* or --email/--password)
+  rotate-encryption-key  re-encrypt provider keys with a new APP_ENCRYPTION_KEY
+  reconcile [--fix]  check (and repair) database / vector index / storage consistency
   doctor     check connectivity to every internal service and configured provider
 """
 
@@ -179,6 +181,74 @@ def cmd_reset_admin(args: argparse.Namespace) -> int:
     return 0
 
 
+async def rotate_encryption_key() -> dict:
+    """Re-encrypt every stored secret with APP_ENCRYPTION_KEY (old ones readable with ..._PREVIOUS).
+
+    All or nothing: if any secret cannot be decrypted with either key, nothing is changed.
+    """
+    from cryptography.exceptions import InvalidTag
+    from sqlalchemy import select
+
+    from opennotebook.crypto import get_secret_box
+    from opennotebook.db import get_sessionmaker
+    from opennotebook.models import AuditLog, Secret
+
+    box = get_secret_box()
+    report = {"secrets": 0, "re_encrypted": 0, "already_current": 0}
+    async with get_sessionmaker()() as session:
+        secrets = list((await session.scalars(select(Secret).with_for_update())).all())
+        report["secrets"] = len(secrets)
+        plain: list[tuple[Secret, str, bool]] = []
+        for secret in secrets:
+            try:
+                value, used_previous = box.decrypt_with_key_info(secret.ciphertext, secret.nonce)
+            except InvalidTag as exc:
+                raise SystemExit(
+                    f"secret {secret.id} cannot be decrypted with APP_ENCRYPTION_KEY or "
+                    "APP_ENCRYPTION_KEY_PREVIOUS: nothing was changed"
+                ) from exc
+            plain.append((secret, value, used_previous))
+        for secret, value, used_previous in plain:
+            secret.ciphertext, secret.nonce = box.encrypt(value)
+            if used_previous:
+                secret.key_version = (secret.key_version or 1) + 1
+                report["re_encrypted"] += 1
+            else:
+                report["already_current"] += 1
+        session.add(AuditLog(actor_id=None, action="secrets.rotate", target_type="secret", details=report))
+        await session.commit()
+    return report
+
+
+def cmd_rotate_encryption_key(_: argparse.Namespace) -> int:
+    from opennotebook.config import get_settings
+
+    if not get_settings().app_encryption_key_previous:
+        print(
+            "Set APP_ENCRYPTION_KEY to the new key and APP_ENCRYPTION_KEY_PREVIOUS to the old one first",
+            file=sys.stderr,
+        )
+        return 2
+    print(json.dumps(asyncio.run(rotate_encryption_key()), indent=2))
+    print("Done: remove APP_ENCRYPTION_KEY_PREVIOUS from the environment and restart the services.")
+    return 0
+
+
+def cmd_reconcile(args: argparse.Namespace) -> int:
+    from opennotebook.db import get_sessionmaker
+    from opennotebook.ingestion.reconcile import reconcile
+    from opennotebook.ingestion.vectors import get_vector_index
+    from opennotebook.storage import get_blob_store
+
+    async def go() -> dict:
+        async with get_sessionmaker()() as session:
+            return await reconcile(session, get_vector_index(), get_blob_store(), fix=args.fix)
+
+    report = asyncio.run(go())
+    print(json.dumps(report, indent=2))
+    return 0 if report["ok"] or args.fix else 1
+
+
 def cmd_api(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -195,6 +265,22 @@ def cmd_api(args: argparse.Namespace) -> int:
 
 
 def cmd_worker(args: argparse.Namespace) -> int:
+    # Prometheus multiprocess mode: Celery children write metric files, this process serves them.
+    # Must be set before prometheus_client is imported (opennotebook.worker imports the gateway).
+    import shutil
+    import tempfile
+
+    metrics_dir = os.environ.setdefault(
+        "PROMETHEUS_MULTIPROC_DIR", os.path.join(tempfile.gettempdir(), "opennotebook-metrics")
+    )
+    shutil.rmtree(metrics_dir, ignore_errors=True)
+    os.makedirs(metrics_dir, exist_ok=True)
+    from prometheus_client import CollectorRegistry, multiprocess, start_http_server
+
+    registry = CollectorRegistry()
+    multiprocess.MultiProcessCollector(registry)
+    start_http_server(int(os.environ.get("WORKER_METRICS_PORT", "9101")), registry=registry)
+
     from opennotebook.worker import QUEUES, celery_app
 
     argv = ["worker", "--loglevel=INFO", f"--queues={','.join(QUEUES)}", *args.celery_args]
@@ -233,6 +319,15 @@ def main(argv: list[str] | None = None) -> int:
         "--password", help="prefer RESET_ADMIN_PASSWORD or BOOTSTRAP_ADMIN_PASSWORD (not shell history)"
     )
     p_reset.set_defaults(func=cmd_reset_admin)
+    p_rec = sub.add_parser("reconcile", help="check database, vector index and storage consistency")
+    p_rec.add_argument(
+        "--fix", action="store_true", help="re-queue inconsistent sources, delete orphan vectors"
+    )
+    p_rec.set_defaults(func=cmd_reconcile)
+    sub.add_parser(
+        "rotate-encryption-key",
+        help="re-encrypt stored provider keys with APP_ENCRYPTION_KEY (needs APP_ENCRYPTION_KEY_PREVIOUS)",
+    ).set_defaults(func=cmd_rotate_encryption_key)
 
     args = parser.parse_args(argv)
     return int(args.func(args) or 0)

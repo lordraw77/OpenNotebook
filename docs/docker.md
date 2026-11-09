@@ -97,7 +97,7 @@ docker compose --env-file .env -f deploy/compose/docker-compose.yml --profile ob
 |---|---|---|
 | *(none)* | web, api, worker, migrate, postgres, qdrant, seaweedfs, redis | always: a complete, working instance |
 | `auth` | Keycloak on `${KEYCLOAK_BIND}:8081` (public URL `KEYCLOAK_PUBLIC_URL`) | OIDC single sign-on (see [deploy.md](deploy.md#single-sign-on-optional)) |
-| `observability` | Prometheus on `127.0.0.1:9090` (scrapes `api:8000/metrics`), Grafana on `127.0.0.1:3000` | metrics dashboards; OTel traces and Loki logs arrive in M6 |
+| `observability` | Prometheus on `127.0.0.1:9090` (api and worker metrics, alert rules), Grafana on `127.0.0.1:3000` (dashboard *OpenNotebook overview*), Jaeger on `127.0.0.1:16686` (traces: set `OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318`) | monitoring, alerts and tracing ([operations/monitoring.md](operations/monitoring.md)) |
 
 There is no model-serving profile. Ollama, if used, is your existing external server, set with `OLLAMA_API_BASE`.
 
@@ -160,6 +160,10 @@ length, the answer length and the interactive timeouts; defaults are in `.env.ex
 | `make hub-publish` | build, check, create/update the Docker Hub repositories with their overview (`docs/dockerhub/`), push `VERSION` and `latest` |
 | `make clean` | stop and **delete all volumes** (asks for confirmation) |
 | `docker compose … run --rm api reset-admin` | create the administrator or reset its password (from `BOOTSTRAP_ADMIN_*`) |
+| `make backup` / `make restore BACKUP=…` | back up / restore database, files, vector index and `.env` (`scripts/backup.sh`, `scripts/restore.sh`) |
+| `docker compose … run --rm api reconcile [--fix]` | check (and repair) database / vector index / storage consistency |
+| `docker compose … run --rm api rotate-encryption-key` | re-encrypt provider keys after changing `APP_ENCRYPTION_KEY` |
+| `make sync-deploy` | render the observability configuration into the deployment Compose file |
 
 Use another env file with `ENV_FILE=path`, e.g. `make up ENV_FILE=.env.staging`.
 
@@ -206,4 +210,7 @@ tar xzf opennotebook-<version>-bundle.tar.gz && cd opennotebook-<version>
 | SSO returns to the login page with "The sign-in attempt expired" | the state cookie was not sent back: open the UI at exactly `APP_PUBLIC_URL` (same host and scheme) |
 | Chat says "No model allowed by this project's provider policy" | the project's policy (Project settings… in the Workbench) excludes every model of the phase's chain; allow a provider or add a model of an allowed provider to the chain |
 | After changing the embedding model, search results come from the old model | expected until every source is re-indexed (RAG Status → Re-index): the old index keeps serving, then the switch is atomic |
+| HTTP 502 from the web UI right after the api was recreated | fixed in 0.5.1+: nginx re-resolves `api` through Docker DNS; with an older web image restart `web` |
+| HTTP 429 "Too many questions / searches" | per-user rate limits (`CHAT_RATE_LIMIT_PER_MINUTE`, `SEARCH_RATE_LIMIT_PER_MINUTE`, `RESEARCH_RATE_LIMIT_PER_HOUR`) |
+| A container restarts with exit code 137 | it hit its memory cap (`*_MEM_LIMIT`): raise the cap or lower the input limits |
 | Unexpected profile services start | inline comment in `.env` on `COMPOSE_PROFILES` (see Configuration) |

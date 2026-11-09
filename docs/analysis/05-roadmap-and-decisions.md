@@ -12,7 +12,7 @@
 | **M3 — Extended ingestion** ✅ (2026-11-08) | Archives (hardened), code (tree-sitter), images (OCR + vision), web scraping (SSRF-safe), summary and suggested questions. | US-04, US-05, US-06 pass. |
 | **M4 — Graph and wiki** ✅ (2026-11-08) | Entity/relation extraction, code graph, graph-based retrieval expansion, navigable wiki pages, graph view. | Multi-hop questions improve on the eval set. |
 | **M5 — Advanced research and administration** ✅ (2026-11-08) | Multi-step agent / cited report, encrypted key management UI, groups and full permissions, OIDC, per-project provider policy. | US-07, US-08 pass. |
-| **M6 — Production** | Observability (OTel, dashboards, alerts, SLOs), hardening, load tests, backup/restore, release bundle, operations docs, first release. | Runbooks and SLOs defined; `make bundle` installs on a host without registry access. |
+| **M6 — Production** ✅ (2026-11-09) | Observability (OTel, dashboards, alerts, SLOs), hardening, load tests, backup/restore, release bundle, operations docs, first release. | Runbooks and SLOs defined; `make bundle` installs on a host without registry access. |
 
 Continuous RAG quality evaluation from M2: a question/expected-answer dataset per test corpus, measuring recall@k, citation accuracy and correct-abstention rate.
 
@@ -90,6 +90,22 @@ Continuous RAG quality evaluation from M2: a question/expected-answer dataset pe
 - The provider policy restricts providers, not individual models; an empty policy blocks the project entirely.
 - During an embedding change, sources whose content changed are embedded twice (old and new model) until the
   switch.
+
+## 2.6 State after M6
+
+Exit criteria: runbooks and SLOs are defined ([../operations/](../operations/README.md)); `make bundle`
+installs on a host without registry access (verified). Load test, backup/restore and the RAG evaluation set were
+run on the test host; results in [../operations/performance.md](../operations/performance.md) and
+[../operations/rag-evaluation.md](../operations/rag-evaluation.md).
+
+Still open (candidates for the next iterations):
+
+- **Italian UI (NFR-06)**: the interface is English only; answers already follow the language of the question.
+- Network-isolated parsing worker and the DOCX/PPTX → PDF converter service (threat T5, M3 limitations).
+- Database spans in traces (waiting for SQLAlchemy 2.1 support in the OpenTelemetry instrumentation).
+- `filelock` CVEs accepted until LiteLLM allows `filelock>=4.2.1` ([../operations/security.md](../operations/security.md)).
+- A larger evaluation corpus to measure the effect of graph expansion on multi-hop questions.
+- Lazy tree / paginated source lists for notebooks with thousands of sources; Helm chart (NFR-08).
 
 ## 3. Open decisions
 

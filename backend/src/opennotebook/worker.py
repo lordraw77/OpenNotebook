@@ -11,6 +11,7 @@ import os
 import uuid
 
 from celery import Celery
+from celery.signals import worker_process_init
 from kombu import Queue
 
 from opennotebook.config import get_settings
@@ -35,6 +36,15 @@ celery_app.conf.update(
     task_serializer="json",
     accept_content=["json"],
 )
+
+
+@worker_process_init.connect
+def _init_tracing(**_: object) -> None:
+    """Each prefork child sets up its own exporter (threads do not survive fork)."""
+    from opennotebook.tracing import configure_tracing
+
+    configure_tracing("worker")
+
 
 _loop: asyncio.AbstractEventLoop | None = None
 _loop_pid: int | None = None
@@ -129,9 +139,14 @@ def summarize_source_task(self, source_id: str) -> str:  # type: ignore[no-untyp
         async with sessionmaker() as session:
             return await summarize_source(session, uuid.UUID(source_id))
 
+    from opennotebook.metrics import BACKGROUND_TASKS
+
     try:
-        return run(go())
+        outcome = run(go())
+        BACKGROUND_TASKS.labels("summary", outcome).inc()
+        return outcome
     except GatewayError as exc:
+        BACKGROUND_TASKS.labels("summary", "retry" if self.request.retries < 2 else "failed").inc()
         if self.request.retries >= 2:
             error = exc
 
@@ -155,9 +170,14 @@ def extract_graph_task(self, source_id: str) -> str:  # type: ignore[no-untyped-
         async with sessionmaker() as session:
             return await extract_source_graph(session, uuid.UUID(source_id), store)
 
+    from opennotebook.metrics import BACKGROUND_TASKS
+
     try:
-        return run(go())
+        outcome = run(go())
+        BACKGROUND_TASKS.labels("graph", outcome).inc()
+        return outcome
     except GatewayError as exc:
+        BACKGROUND_TASKS.labels("graph", "retry" if self.request.retries < 2 else "failed").inc()
         if self.request.retries >= 2:
             error = exc
 

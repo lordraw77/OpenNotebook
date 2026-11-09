@@ -123,7 +123,17 @@ async def ask(
     conversation_id: uuid.UUID, body: QuestionIn, user: CurrentUser, session: SessionDep
 ) -> StreamingResponse:
     """Ask a question; the answer streams as server-sent events (see opennotebook.chat.service)."""
+    from opennotebook.config import get_settings
+    from opennotebook.ratelimit import too_many_attempts
+
     conv = await _own(session, user, conversation_id)
+    settings = get_settings()
+    limit = settings.chat_rate_limit_per_minute
+    if limit and await too_many_attempts(f"chat:{user.id}", limit, 60):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many questions: wait a minute and retry")
+    hourly = settings.research_rate_limit_per_hour
+    if body.mode == "research" and hourly and await too_many_attempts(f"research:{user.id}", hourly, 3600):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Deep research limit reached for this hour")
     return StreamingResponse(
         answer_stream(conv.id, user.id, body.content.strip(), body.model_id, body.mode),
         media_type="text/event-stream",

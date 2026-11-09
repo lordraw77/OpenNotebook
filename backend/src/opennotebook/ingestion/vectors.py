@@ -107,6 +107,30 @@ class VectorIndex:
             return 0
         return (await self.client.count(name, exact=True)).count
 
+    async def count_source(self, name: str, source_id: uuid.UUID) -> int:
+        if not await self.client.collection_exists(name):
+            return 0
+        return (
+            await self.client.count(name, count_filter=_match("source_id", str(source_id)), exact=True)
+        ).count
+
+    async def collections(self) -> list[str]:
+        return [
+            c.name for c in (await self.client.get_collections()).collections if c.name.startswith("chunks__")
+        ]
+
+    async def source_ids(self, name: str) -> set[str]:
+        """Distinct source ids that have points in a collection (payload scroll, no vectors)."""
+        ids: set[str] = set()
+        offset = None
+        while True:
+            points, offset = await self.client.scroll(
+                name, limit=1000, offset=offset, with_payload=["source_id"], with_vectors=False
+            )
+            ids.update(str(p.payload.get("source_id")) for p in points if p.payload)
+            if offset is None:
+                return ids
+
     async def search(
         self,
         name: str,

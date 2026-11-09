@@ -1,0 +1,16 @@
+# Accepted Python vulnerabilities (one id per line); reasons in docs/operations/security.md.
+# filelock < 4.2.1 (transitive: litellm 1.108 pins filelock < 4): local-user symlink/ACL races on shared lock
+# directories; not reachable here (single non-root user, read-only root, private /tmp, lock code paths unused).
+CVE-2026-112907
+CVE-2026-112908
+CVE-2026-112909
+CVE-2026-112910
+CVE-2026-112911
+CVE-2026-112912
+CVE-2026-112913
+CVE-2026-112915
+CVE-2026-112935
+CVE-2026-112936
+CVE-2026-112938
+CVE-2026-112939
+CVE-2026-112940

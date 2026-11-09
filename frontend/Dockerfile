@@ -8,6 +8,10 @@ COPY . .
 RUN npx ng build --configuration production
 
 FROM nginxinc/nginx-unprivileged:1.31.7-alpine
+# Security updates of the Alpine base published after the image was built, then back to the nginx user.
+USER root
+RUN apk upgrade --no-cache
+USER 101
 ARG VERSION=dev
 LABEL org.opencontainers.image.title="OpenNotebook web" \
       org.opencontainers.image.description="OpenNotebook web UI (Angular) served by unprivileged nginx; proxies /api to the api service." \

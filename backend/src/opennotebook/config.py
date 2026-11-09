@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     app_public_url: str = "http://localhost:8080"
     app_secret_key: str = Field(default="", description="JWT signing key")
     app_encryption_key: str = Field(default="", description="base64 32-byte master key for secrets")
+    # set only while rotating the master key (see `opennotebook rotate-encryption-key`)
+    app_encryption_key_previous: str = ""
     app_default_language: str = "en"
     log_level: str = "INFO"
     access_token_ttl_s: int = 900
@@ -73,6 +75,11 @@ class Settings(BaseSettings):
     # passages given to the model to write a wiki page
     wiki_max_passages: int = 12
     wiki_timeout_s: int = 120
+
+    # Per-user rate limits (requests per minute; 0 = unlimited) - protect provider quotas (threat T14)
+    chat_rate_limit_per_minute: int = 20
+    research_rate_limit_per_hour: int = 20
+    search_rate_limit_per_minute: int = 120
 
     # Deep research mode
     research_max_sub_questions: int = 5

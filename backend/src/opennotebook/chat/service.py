@@ -139,6 +139,9 @@ async def answer_stream(
         answer = Message(conversation_id=conversation.id, role="assistant", content="", status="complete")
         text_parts: list[str] = []
         started = time.perf_counter()
+        from opennotebook.metrics import CHAT_ANSWERS, CHAT_FIRST_TOKEN
+
+        first_token_seen = False
         try:
             yield sse("status", {"stage": "retrieving"})
             previous = await _history(session, conversation.id, question_msg.id)
@@ -224,6 +227,9 @@ async def answer_stream(
                         answer.attempts = ev.attempts
                         yield sse("provider", {"model": ev.used.label, "attempts": ev.attempts})
                     elif ev.kind == "token":
+                        if not first_token_seen:
+                            first_token_seen = True
+                            CHAT_FIRST_TOKEN.labels(mode).observe(time.perf_counter() - started)
                         text_parts.append(ev.text)
                         yield sse("token", {"text": ev.text})
                     elif ev.kind == "usage":
@@ -254,6 +260,7 @@ async def answer_stream(
             }
             if answer.latency_ms is None:
                 answer.latency_ms = int((time.perf_counter() - started) * 1000)
+            CHAT_ANSWERS.labels(mode, answer.status if not check.abstained else "abstained").inc()
             # Persist even when the client went away: shield the write from cancellation.
             with anyio.CancelScope(shield=True):
                 session.add(answer)

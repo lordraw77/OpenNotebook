@@ -61,14 +61,60 @@ jobs:
       - run: npm test
       - run: npx ng build --configuration production
 
+  dependencies:
+    # Known vulnerabilities in the shipped dependencies (accepted exceptions: docs/operations/security.md)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - name: Python dependencies (pip-audit)
+        working-directory: backend
+        run: |
+          uv export --frozen --no-dev --no-hashes --no-emit-project > /tmp/requirements.txt
+          uvx pip-audit -r /tmp/requirements.txt --progress-spinner off $(sed -e 's/#.*//' ../.pip-audit-ignore | xargs -r -n1 echo --ignore-vuln)
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+      - name: npm dependencies (npm audit)
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund && npm audit --omit=dev --audit-level=high
+
   images:
     runs-on: ubuntu-latest
     needs: [backend, frontend]
     steps:
       - uses: actions/checkout@v5
+      - name: Release version
+        run: echo "VERSION=$(cat VERSION)" >> "$GITHUB_ENV"
       - name: Generate a throwaway env file
         run: scripts/gen-secrets.sh .env.ci
       - run: make build ENV_FILE=.env.ci
       - run: make check-no-models ENV_FILE=.env.ci
+      - name: Image vulnerability scan (HIGH/CRITICAL with a fix available)
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          scan-type: image
+          image-ref: lordraw/opennotebook-api:${{ env.VERSION }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          trivyignores: .trivyignore
+      - name: Web image vulnerability scan
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          scan-type: image
+          image-ref: lordraw/opennotebook-web:${{ env.VERSION }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          trivyignores: .trivyignore
+      - name: SBOM (SPDX) of the api/worker image
+        uses: anchore/sbom-action@v0.24.2
+        with:
+          image: lordraw/opennotebook-api:${{ env.VERSION }}
+          format: spdx-json
+          artifact-name: opennotebook-api.spdx.json
+      - name: Production Compose observability config in sync
+        run: python3 scripts/sync_observability.py --check
       - name: Validate the deployment Compose file
         run: cp .env.ci deploy/production/.env && docker compose -f deploy/production/docker-compose.yml --profile auth --profile observability config --quiet

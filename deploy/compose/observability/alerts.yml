@@ -1,0 +1,57 @@
+# OpenNotebook alert rules (see docs/operations/slo.md and docs/operations/runbooks.md).
+groups:
+  - name: opennotebook
+    rules:
+      - alert: OpenNotebookApiDown
+        expr: up{job="opennotebook-api"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: The OpenNotebook api is not answering
+          runbook: docs/operations/runbooks.md#api-down
+      - alert: OpenNotebookWorkerDown
+        expr: absent(up{job="opennotebook-worker"} == 1)
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: No ingestion worker is running
+          runbook: docs/operations/runbooks.md#worker-down
+      - alert: OpenNotebookHighErrorRate
+        expr: |
+          sum(rate(opennotebook_http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(opennotebook_http_requests_total[5m])), 1e-9) > 0.05
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: More than 5% of API requests fail (availability SLO at risk)
+          runbook: docs/operations/runbooks.md#errors
+      - alert: OpenNotebookChatSlow
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(opennotebook_chat_time_to_first_token_seconds_bucket{mode="chat"}[30m]))) > 8
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: Chat time to first token p95 above 8 s
+          runbook: docs/operations/runbooks.md#slow-chat
+      - alert: OpenNotebookProviderErrors
+        expr: |
+          sum by (provider) (rate(opennotebook_provider_calls_total{outcome="error"}[15m]))
+            / clamp_min(sum by (provider) (rate(opennotebook_provider_calls_total[15m])), 1e-9) > 0.25
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Provider {{ $labels.provider }}: more than 25% of calls fail"
+          runbook: docs/operations/runbooks.md#provider-outage
+      - alert: OpenNotebookQueueBacklog
+        expr: max(opennotebook_queue_depth) > 100
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: Ingestion jobs are piling up
+          runbook: docs/operations/runbooks.md#queue-backlog
+      - alert: OpenNotebookIngestionFailures
+        expr: sum(increase(opennotebook_ingestion_jobs_total{status="failed"}[1h])) > 5
+        labels: { severity: info }
+        annotations:
+          summary: More than 5 sources failed in the last hour
+          runbook: docs/operations/runbooks.md#ingestion-failures

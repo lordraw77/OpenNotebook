@@ -51,6 +51,15 @@ def diversify(hits: list[SearchHit], limit: int, max_per_source: int) -> list[Se
 async def retrieve(
     session: AsyncSession, index: VectorIndex, user: User, scope: Node, query: str
 ) -> Retrieved:
+    from opennotebook.metrics import RETRIEVAL_DURATION, timed
+
+    with timed(RETRIEVAL_DURATION):
+        return await _retrieve(session, index, user, scope, query)
+
+
+async def _retrieve(
+    session: AsyncSession, index: VectorIndex, user: User, scope: Node, query: str
+) -> Retrieved:
     settings = get_settings()
     hits, embedding_model = await search_scope(
         session, index, user, scope, query, limit=settings.chat_candidates

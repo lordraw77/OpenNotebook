@@ -26,3 +26,4 @@ dist/
 
 # Knowledge graph output (graphify)
 graphify-out/
+backups/

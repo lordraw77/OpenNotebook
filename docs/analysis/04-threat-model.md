@@ -75,6 +75,17 @@ Every model call crosses boundary 4 or 5: no model runs inside the stack (ADR-00
 - **T1 with groups**: group grants go through the same pre-filter; a group reading only `documentation` never
   sees `source` in the tree, search, chat, research or graph (US-07).
 
+### 3.4 Implementation status (M6)
+
+- **T14**: per-user rate limits on chat, deep research and search (Redis, fail-open if Redis is down).
+- **T15**: dependency audit (`pip-audit`, `npm audit`), image scanning (Trivy) and SBOM in CI; OS security
+  updates applied at image build. Accepted exceptions are listed with reasons in
+  [../operations/security.md](../operations/security.md).
+- **T8**: `APP_ENCRYPTION_KEY` rotation (`rotate-encryption-key`, all or nothing, previous key accepted during
+  the change).
+- **T5 / D (denial of service)**: memory and PID limits per container.
+- Backups contain `.env` in clear: the runbook requires encrypted, off-host storage.
+
 ## 4. Policies
 
 - **Least privilege**: each service has its own DB credentials with minimal rights; Qdrant, Redis and SeaweedFS are reachable only on the internal Docker network, with authentication enabled.
