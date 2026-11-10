@@ -2,6 +2,26 @@
 
 All notable changes. Images: `lordraw/opennotebook-{web,api,worker}` on Docker Hub.
 
+## 1.3.0 — 2026-11-10
+
+- 7z and RAR archives are extracted like ZIP and TAR (same limits: size, ratio, file count, depth, unsafe paths,
+  links). They are read with libarchive (BSD licence), installed in the worker image (`libarchive13t64`); new
+  dependency `libarchive-c`. Encrypted members are reported, not extracted. Dev-only: `py7zr` for tests.
+- Pictures inside PDF and DOCX are read by the OCR/vision models and become text blocks at their position
+  (`[Image]` description, `[Text in image]`); in PDF they carry the picture's box, so a citation highlights it.
+  Settings `EMBEDDED_IMAGES` (default on, needs an OCR or vision model), `EMBEDDED_IMAGES_MAX` (20 per source),
+  `EMBEDDED_IMAGE_MIN_PX` (64). Repeated pictures (logos), tiny ones and page-sized backgrounds are skipped; a
+  failing model call only costs that picture. Slides/sheets (PPTX, XLSX) are not covered.
+- OCR text is anchored to line boxes instead of the whole page: with `OCR_LAYOUT=auto` (default) a vision model is
+  asked for the lines of a scanned page or image and their rectangles, and citations highlight those lines.
+  `always` does it even when an OCR chain exists, `off` keeps whole-page anchors. A reply without usable boxes
+  falls back to whole-page anchors with a warning. Dedicated OCR models (Mistral OCR) only return Markdown, so
+  with them the anchor stays the whole page unless `OCR_LAYOUT=always`.
+- In-app user guide (top bar → Guide) in English and Italian, following the interface language, with screenshots of
+  the real interface in each language. `make docs-screenshots` regenerates them from a demo backend with scripted
+  models (`scripts/docs/`).
+- `VERSION`, Helm chart and compose defaults aligned with the release number.
+
 ## 1.2.0 — 2026-11-09
 
 - Deep research reads what it found and searches again for what is missing (`RESEARCH_MAX_ROUNDS`, default 2;

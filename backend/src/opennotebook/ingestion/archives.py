@@ -1,4 +1,7 @@
-"""Hardened archive extraction (ZIP and TAR, optionally gzip/bzip2/xz compressed).
+"""Hardened archive extraction (ZIP, TAR optionally gzip/bzip2/xz compressed, 7z and RAR).
+
+7z and RAR are read with libarchive (BSD licence; the `libarchive-c` binding loads the system library that the
+worker image installs). Only those two formats are enabled in it, whatever the file claims to be.
 
 Defences (threat model: zip bombs, path traversal, links, device files):
   - the archive is read from memory and never extracted to disk;
@@ -105,6 +108,8 @@ def iter_members(data: bytes, fmt: str, limits: Limits) -> Iterator[Member | Ski
         yield from _zip(data, budget)
     elif fmt == "tar":
         yield from _tar(data, budget)
+    elif fmt in ("7z", "rar"):
+        yield from _libarchive(data, fmt, budget)
     else:
         raise ArchiveRejected(f"Unsupported archive format {fmt}")
 
@@ -173,3 +178,67 @@ def _tar(data: bytes, budget: _Budget) -> Iterator[Member | Skipped]:
                 yield Member(path, content)
         except (tarfile.TarError, EOFError, OSError) as exc:
             raise ArchiveRejected(f"Corrupted TAR archive ({exc.__class__.__name__})") from exc
+
+
+class _BlockStream:
+    """File-like adapter over libarchive's block iterator, so `_Budget.read` can count the real bytes."""
+
+    def __init__(self, blocks: Iterator[bytes]) -> None:
+        self._blocks = blocks
+        self._buffer = b""
+
+    def read(self, size: int) -> bytes:
+        while len(self._buffer) < size:
+            block = next(self._blocks, b"")
+            if not block:
+                break
+            self._buffer += block
+        out, self._buffer = self._buffer[:size], self._buffer[size:]
+        return out
+
+
+def _rar_format(data: bytes) -> str:
+    return "rar5" if data.startswith(b"Rar!\x1a\x07\x01\x00") else "rar"
+
+
+def _libarchive(data: bytes, fmt: str, budget: _Budget) -> Iterator[Member | Skipped]:
+    try:
+        import libarchive
+        from libarchive.exception import ArchiveError
+    except (ImportError, OSError) as exc:  # the shared library is missing from the image
+        raise ArchiveRejected(f"{fmt.upper()} archives need the libarchive library on the worker") from exc
+    format_name = "7zip" if fmt == "7z" else _rar_format(data)
+    label = fmt.upper()
+    yielded = False
+    entries = 0
+    try:
+        with libarchive.memory_reader(data, format_name=format_name, filter_name="none") as archive:
+            for entry in archive:
+                entries += 1
+                if entry.isdir:
+                    continue
+                path = safe_path(entry.pathname or "")
+                if path is None:
+                    yield Skipped((entry.pathname or "")[:300], "unsafe path")
+                    continue
+                if not entry.isreg:
+                    yield Skipped(path, "link or special file")
+                    continue
+                budget.add_file()
+                try:
+                    content = budget.read(_BlockStream(iter(entry.get_blocks())))
+                except ArchiveError as exc:
+                    # typically an encrypted member; later members of a solid archive are unreachable as well
+                    yield Skipped(path, f"unreadable or encrypted ({str(exc)[:60]})")
+                    return
+                if content is None:
+                    yield Skipped(path, "file too large")
+                    continue
+                yielded = True
+                yield Member(path, content)
+        if not entries:
+            raise ArchiveRejected(f"Corrupted or empty {label} archive")
+    except ArchiveError as exc:
+        if yielded:
+            return
+        raise ArchiveRejected(f"Corrupted or unsupported {label} archive ({str(exc)[:80]})") from exc

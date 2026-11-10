@@ -13,6 +13,40 @@ BLOCK_SEPARATOR = "\n\n"
 
 
 @dataclass
+class OcrLine:
+    """One line of OCR text with its rectangle, as fractions (0..1) of the image width and height."""
+
+    text: str
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+
+
+@dataclass
+class EmbeddedImage:
+    """A picture inside a PDF or DOCX, read by OCR and/or a vision model (`bbox`: PDF page points)."""
+
+    ocr: str = ""
+    description: str = ""
+    bbox: dict | None = None
+
+
+def group_ocr_lines(lines: list[OcrLine]) -> list[list[OcrLine]]:
+    """Paragraphs of OCR lines: a new paragraph starts after a vertical gap larger than 0.8 line heights."""
+    groups: list[list[OcrLine]] = []
+    for line in lines:
+        if groups:
+            prev = groups[-1][-1]
+            height = max(prev.y1 - prev.y0, line.y1 - line.y0)
+            if 0 <= line.y0 - prev.y1 <= height * 0.8 and abs(line.x0 - prev.x0) < 0.25:
+                groups[-1].append(line)
+                continue
+        groups.append([line])
+    return groups
+
+
+@dataclass
 class Block:
     text: str
     block_type: str  # heading | paragraph | table | list | code
@@ -39,6 +73,8 @@ class ParsedDocument:
     raw_text: str | None = None
     # PDF pages without a text layer (candidates for OCR)
     scanned_pages: list[int] = field(default_factory=list)
+    # PDF pictures worth reading (not scans, not decoration): [{page, x0, top, x1, bottom}] in PDF points
+    image_boxes: list[dict] = field(default_factory=list)
     language: str | None = None
     # source code: members of small classes, not blocks of their own (parent, name, kind, start, end)
     symbols: list[tuple[str, str, str, int, int]] = field(default_factory=list)

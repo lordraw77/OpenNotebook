@@ -44,6 +44,11 @@ export const routes: Routes = [
           import('./pages/status/status.component').then((m) => m.StatusComponent),
       },
       {
+        path: 'guide',
+        title: 'Guide · OpenNotebook',
+        loadComponent: () => import('./pages/guide/guide.component').then((m) => m.GuideComponent),
+      },
+      {
         path: 'settings',
         loadComponent: () =>
           import('./pages/settings/settings.component').then((m) => m.SettingsComponent),

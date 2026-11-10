@@ -75,6 +75,7 @@ Redis. Optional profiles: `observability` (Prometheus, Grafana, Jaeger), `auth` 
 
 | Tag | Content |
 |---|---|
+| `1.3.0` | 7z and RAR archives, pictures inside PDF/DOCX read by models, OCR text anchored to line boxes, in-app user guide |
 | `1.2.0` | Iterative deep research, model-rewritten follow-ups, no double embedding on model change, chat history |
 | `1.1.0` | Git repository sources with scheduled sync, native XLSX/PPTX import, editable knowledge graph |
 | `1.0.1` | Rerank through Ollama-compatible proxies (llmproxy) |
@@ -84,7 +85,7 @@ Redis. Optional profiles: `observability` (Prometheus, Grafana, Jaeger), `auth` 
 | `0.4.0` | M0–M4: foundations, ingestion, grounded chat, extended ingestion, knowledge graph and wiki |
 | `latest` | The most recent release |
 
-Pin an exact version in production (`VERSION=1.2.0` in `.env`). The three images of a deployment must have the
+Pin an exact version in production (`VERSION=1.3.0` in `.env`). The three images of a deployment must have the
 same version. Images are `linux/amd64`.
 
 {{IMAGE_DETAILS}}

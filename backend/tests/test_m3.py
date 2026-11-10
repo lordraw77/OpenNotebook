@@ -183,6 +183,7 @@ def test_summary_reply_parsing():
 class FakeModels:
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.layout_reply: str | None = None  # reply to the "locate the text lines" prompt (None: not JSON)
         self.summary_reply = json.dumps(
             {
                 "summary": "Firmware notes about the radio.",
@@ -199,8 +200,18 @@ class FakeModels:
         content = messages[0]["content"]
         if isinstance(content, list):
             prompt = content[0]["text"]
-            kind = "transcribe" if prompt.startswith("Transcribe") else "describe"
-            text = "LABEL TEXT" if kind == "transcribe" else "A photo of a router label with a serial number."
+            kind = (
+                "transcribe"
+                if prompt.startswith("Transcribe")
+                else "layout"
+                if prompt.startswith("Locate")
+                else "describe"
+            )
+            text = {
+                "transcribe": "LABEL TEXT",
+                "layout": self.layout_reply or "I can see a label.",
+                "describe": "A photo of a router label with a serial number.",
+            }[kind]
         else:
             kind, text = "summary", self.summary_reply
         self.calls.append(f"{kind}:{model}")

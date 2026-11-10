@@ -34,6 +34,13 @@ TRANSCRIBE_PROMPT = (
     "(keep headings, lists and tables). Do not describe the image and do not add anything. "
     "If the image contains no text, reply exactly: NO TEXT"
 )
+LAYOUT_PROMPT = (
+    "Locate every line of text visible in this image. Reply with a JSON array only, no other text and no "
+    'code fence, in reading order: [{"text": "<the line, verbatim>", "box": [x0, y0, x1, y1]}, ...]. '
+    "The box is the rectangle around the line: x0,y0 is its top-left corner and x1,y1 its bottom-right "
+    "corner, integers from 0 to 1000 relative to the image width and height (0,0 is the top-left corner "
+    "of the image, 1000,1000 the bottom-right). If the image contains no text, reply exactly: []"
+)
 DESCRIBE_PROMPT = (
     "Describe this image for a search index in 3 to 8 sentences: what kind of image it is (photo, diagram, "
     "screenshot, chart, drawing, ...), what it shows, the important objects, labels, numbers and how they "
@@ -288,18 +295,27 @@ class ModelGateway:
         return True
 
     async def transcribe_image(
-        self, image_data_uri: str, project_id: uuid.UUID | None = None, phase: ModelPhase = ModelPhase.ocr
+        self,
+        image_data_uri: str,
+        project_id: uuid.UUID | None = None,
+        phase: ModelPhase = ModelPhase.ocr,
+        layout: bool = False,
     ) -> CallResult:
         """Text in an image as Markdown: an OCR model (Mistral OCR) or a vision model prompted to transcribe.
 
-        `phase` is `ocr` normally, `vision` when no OCR chain is configured.
+        `phase` is `ocr` normally, `vision` when no OCR chain is configured. With `layout` a vision model is
+        asked for a JSON array of text lines with their boxes (dedicated OCR models only return Markdown).
         """
         import litellm
 
         chain = await self.resolve(phase, project_id)
 
         async def call(r: ResolvedModel) -> str:
-            if ModelPhase.ocr in set(r.model.capabilities) and r.provider.kind == ProviderKind.mistral:
+            if (
+                not layout
+                and ModelPhase.ocr in set(r.model.capabilities)
+                and r.provider.kind == ProviderKind.mistral
+            ):
                 resp = await litellm.aocr(
                     model=f"mistral/{r.model.model}",
                     document={"type": "image_url", "image_url": image_data_uri},
@@ -312,16 +328,18 @@ class ModelGateway:
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": TRANSCRIBE_PROMPT},
+                            {"type": "text", "text": LAYOUT_PROMPT if layout else TRANSCRIBE_PROMPT},
                             {"type": "image_url", "image_url": {"url": image_data_uri}},
                         ],
                     }
                 ],
-                max_tokens=4096,
+                max_tokens=8192 if layout else 4096,
                 **{**r.params},
                 **litellm_kwargs(r),
             )
             text = (resp.choices[0].message.content or "").strip()
+            if layout:
+                return text
             return "" if text.upper().strip(" .") == "NO TEXT" else text
 
         return await self._run(chain, call, phase.value)

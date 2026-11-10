@@ -77,7 +77,7 @@ const ACCEPT = '';
         <input #picker type="file" multiple hidden [accept]="accept" (change)="onPick(picker)" />
         <p class="muted small">
           {{
-            'PDF (scanned pages via OCR), DOCX, Markdown, text, HTML · code (C, C++, Python, JS/TS, Java, Go, Rust, C#, PHP, Ruby, shell and more) · PNG, JPEG, WebP, TIFF, GIF (OCR + description) · ZIP and TAR archives (each file becomes a source)'
+            'PDF (scanned pages via OCR), DOCX, Markdown, text, HTML · code (C, C++, Python, JS/TS, Java, Go, Rust, C#, PHP, Ruby, shell and more) · PNG, JPEG, WebP, TIFF, GIF (OCR + description) · ZIP, TAR, 7z and RAR archives (each file becomes a source)'
               | t
           }}
         </p>

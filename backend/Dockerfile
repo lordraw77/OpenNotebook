@@ -44,9 +44,10 @@ FROM api AS worker
 LABEL org.opencontainers.image.title="OpenNotebook worker" \
       org.opencontainers.image.description="OpenNotebook ingestion worker (Celery): parsing, OCR/vision calls, web fetching, embeddings, knowledge graph, summaries. No models inside." \
       org.opencontainers.image.url="https://hub.docker.com/r/lordraw/opennotebook-worker"
-# git clones repository sources (Git sources, GIT_ALLOWED_HOSTS); only the worker needs it.
+# git clones repository sources (Git sources, GIT_ALLOWED_HOSTS) and libarchive reads 7z and RAR archives; only the
+# worker needs them.
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates libarchive13t64 && rm -rf /var/lib/apt/lists/*
 USER 10001
 HEALTHCHECK --interval=30s --timeout=15s --start-period=30s --retries=3 \
   CMD ["sh", "-c", "celery -A opennotebook.worker:celery_app inspect ping -d celery@$HOSTNAME --timeout 10 >/dev/null"]

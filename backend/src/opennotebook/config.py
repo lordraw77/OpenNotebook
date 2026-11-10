@@ -60,6 +60,16 @@ class Settings(BaseSettings):
     # longest side sent to OCR / vision providers
     image_max_side: int = 2048
     ocr_max_pages: int = 50
+    # Where the OCR text sits on the page. `auto`: when OCR goes through a vision model (no OCR chain), ask it
+    # for the box of every text line; `always`: do so whenever a vision model is configured, even with an OCR
+    # chain; `off`: whole-page anchors. A model that returns no usable boxes falls back to whole-page anchors.
+    ocr_layout: str = "auto"
+    # Pictures inside PDF and DOCX files are read (OCR + description) when an OCR or vision model exists.
+    embedded_images: bool = True
+    embedded_images_max: int = 20  # per source; the rest is reported as a warning
+    embedded_image_min_px: int = (
+        64  # shorter side, in pixels (points for PDF): smaller pictures are decoration
+    )
 
     # Web pages
     web_max_mb: int = 20

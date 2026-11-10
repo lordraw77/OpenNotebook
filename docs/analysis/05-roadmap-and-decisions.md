@@ -52,14 +52,16 @@ Continuous RAG quality evaluation from M2: a question/expected-answer dataset pe
 
 ## 2.3 Known limitations after M3
 
-- **No 7z / RAR** (py7zr is LGPL with several native dependencies; RAR has no permissive extractor): ZIP and TAR
-  only. Single compressed files (`.gz` without TAR) are refused.
+- ~~No 7z / RAR~~ Since 1.3 they are read with libarchive (BSD) like ZIP and TAR, with the same limits; encrypted
+  members are skipped and reported. Single compressed files (`.gz` without TAR) are still refused.
 - **No JavaScript rendering** of web pages (Playwright would add a browser to the worker image): pages that render
   their content client-side yield little or no text.
 - **Office → PDF conversion** is the optional `converter` service (shipped after M6, see below); without it DOCX
   citations open the text viewer, and PPTX, XLSX, ODF and legacy Office files are refused.
-- Images embedded in PDF/DOCX are not extracted (only scanned pages are transcribed); OCR text is anchored to the
-  whole page or image, not to word boxes.
+- ~~Images embedded in PDF/DOCX are not extracted~~ Since 1.3 they are read by the OCR/vision models and indexed at
+  their position (PDF: with the picture's box); PPTX and XLSX pictures are not. ~~OCR text is anchored to the whole
+  page~~ Since 1.3 a vision model returns the line boxes (`OCR_LAYOUT`); anchors are per line, not per word, and
+  dedicated OCR models (Mistral OCR) still give whole-page anchors.
 - Archive extraction holds the archive in memory (up to `UPLOAD_MAX_MB`); members are streamed with byte limits.
 - The source list and tree load every source of the visible notebooks: an archive with thousands of files makes
   them heavy (pagination / lazy tree loading planned).

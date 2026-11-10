@@ -27,6 +27,9 @@ export const IT: Readonly<Record<string, string>> = {
   Wiki: 'Wiki',
   'RAG Status': 'Stato RAG',
   Settings: 'Impostazioni',
+  Guide: 'Guida',
+  'User guide': 'Guida utente',
+  'Guide contents': 'Indice della guida',
   System: 'Sistema',
   Light: 'Chiaro',
   Dark: 'Scuro',
@@ -217,8 +220,8 @@ export const IT: Readonly<Record<string, string>> = {
   'Drop documents, source code, images or archives here':
     'Trascina qui documenti, codice sorgente, immagini o archivi',
   'Choose files': 'Scegli i file',
-  'PDF (scanned pages via OCR), DOCX, Markdown, text, HTML · code (C, C++, Python, JS/TS, Java, Go, Rust, C#, PHP, Ruby, shell and more) · PNG, JPEG, WebP, TIFF, GIF (OCR + description) · ZIP and TAR archives (each file becomes a source)':
-    'PDF (pagine scansionate via OCR), DOCX, Markdown, testo, HTML · codice (C, C++, Python, JS/TS, Java, Go, Rust, C#, PHP, Ruby, shell e altri) · PNG, JPEG, WebP, TIFF, GIF (OCR + descrizione) · archivi ZIP e TAR (ogni file diventa una fonte)',
+  'PDF (scanned pages via OCR), DOCX, Markdown, text, HTML · code (C, C++, Python, JS/TS, Java, Go, Rust, C#, PHP, Ruby, shell and more) · PNG, JPEG, WebP, TIFF, GIF (OCR + description) · ZIP, TAR, 7z and RAR archives (each file becomes a source)':
+    'PDF (pagine scansionate via OCR), DOCX, Markdown, testo, HTML · codice (C, C++, Python, JS/TS, Java, Go, Rust, C#, PHP, Ruby, shell e altri) · PNG, JPEG, WebP, TIFF, GIF (OCR + descrizione) · archivi ZIP, TAR, 7z e RAR (ogni file diventa una fonte)',
   'Add web pages': 'Aggiungi pagine web',
   'URLs (one per line)': 'URL (uno per riga)',
   'Follow links': 'Segui i link',

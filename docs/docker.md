@@ -134,7 +134,7 @@ External Ollama: set `OLLAMA_API_BASE=http://<host>:11434`; the host must be rea
 For a slow CPU-only server raise `OLLAMA_TIMEOUT_S`.
 
 Ingestion limits: `ARCHIVE_*` (size, files, ratio, depth; images inside archives are skipped unless
-`ARCHIVE_INDEX_IMAGES=true`), `IMAGE_*` and `OCR_MAX_PAGES`, `WEB_*` (size, time, redirects, crawl limits).
+`ARCHIVE_INDEX_IMAGES=true`), `IMAGE_*`, `OCR_MAX_PAGES`, `OCR_LAYOUT`, `EMBEDDED_IMAGE*`, `WEB_*` (size, time, redirects, crawl limits).
 The worker fetches web pages itself, from the `egress` network: private, loopback and link-local addresses are
 refused unless `WEB_ALLOW_PRIVATE=true` (needed only to index intranet sites).
 

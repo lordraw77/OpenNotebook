@@ -24,12 +24,13 @@ from opennotebook.ingestion import git as gitsrc
 from opennotebook.ingestion.archives import ArchiveRejected, Limits, Member, iter_members
 from opennotebook.ingestion.chunker import chunk_document, embedding_text
 from opennotebook.ingestion.convert import ConverterUnavailable
-from opennotebook.ingestion.document import DocumentBuilder, ParsedDocument
+from opennotebook.ingestion.document import DocumentBuilder, EmbeddedImage, ParsedDocument
 from opennotebook.ingestion.parsers import (
     ParseError,
     Sniffed,
     UnsupportedContent,
     decode_text,
+    docx_pictures,
     ensure_content,
     parse,
     parse_html,
@@ -419,7 +420,7 @@ async def _parse_source(
         sniffed.format == "docx" and settings.converter_url and settings.convert_docx
     ):
         return await _parse_office(session, source, raw, sniffed, store, gateway, project_id, job)
-    if sniffed.format in ("zip", "tar"):
+    if sniffed.format in ("zip", "tar", "7z", "rar"):
         return await _expand_archive(session, source, raw, sniffed.format, store)
     if sniffed.format == "image":
         from opennotebook.ingestion.images import parse_image
@@ -428,10 +429,11 @@ async def _parse_source(
         job.provider_model = ", ".join(used)
         return doc
     if sniffed.format == "pdf":
-        first = _pdf_first_pass(raw, source.title)
-        if first.scanned_pages:
-            return await _pdf_with_ocr(raw, first, source.title, gateway, project_id, job)
-        return ensure_content(first)
+        return await _finish_pdf(
+            raw, _pdf_first_pass(raw, source.title), source.title, gateway, project_id, job
+        )
+    if sniffed.format == "docx":
+        return await _parse_docx(raw, source.title, gateway, project_id, job)
     if sniffed.format == "code":
         from opennotebook.ingestion.code import parse_code
 
@@ -457,7 +459,7 @@ async def _parse_office(
     except ParseError as exc:
         if sniffed.format != "docx":
             raise
-        doc = parse(raw, "docx", source.title)  # DOCX is still readable without pages
+        doc = await _parse_docx(raw, source.title, gateway, project_id, job)  # readable without pages
         doc.warnings.append(f"{exc}; indexed without page numbers")
         return doc
     key = blob_key(source.id, "pdf")
@@ -472,10 +474,7 @@ async def _parse_office(
         )
     )
     source.metadata_ = {**(source.metadata_ or {}), "rendition": "pdf"}
-    first = _pdf_first_pass(pdf, source.title)
-    if first.scanned_pages:  # e.g. slides made of pictures
-        return await _pdf_with_ocr(pdf, first, source.title, gateway, project_id, job)
-    return ensure_content(first)
+    return await _finish_pdf(pdf, _pdf_first_pass(pdf, source.title), source.title, gateway, project_id, job)
 
 
 def _pdf_first_pass(raw: bytes, title: str) -> ParsedDocument:
@@ -487,7 +486,7 @@ def _pdf_first_pass(raw: bytes, title: str) -> ParsedDocument:
         raise ParseError(f"Could not parse PDF: {exc.__class__.__name__}") from exc
 
 
-async def _pdf_with_ocr(
+async def _finish_pdf(
     raw: bytes,
     first: ParsedDocument,
     title: str,
@@ -495,13 +494,70 @@ async def _pdf_with_ocr(
     project_id: uuid.UUID,
     job: IngestionJob,
 ) -> ParsedDocument:
-    from opennotebook.ingestion.images import ocr_scanned_pages
+    """Second pass over a PDF: OCR of scanned pages (with line boxes if the model gives them) and the text of
+    pictures inside text pages. Without models, or with nothing to read, the first pass is the result."""
+    from opennotebook.ingestion.images import ocr_scanned_pages, read_pictures, render_pdf_regions
 
-    texts, used, warnings = await ocr_scanned_pages(raw, first.scanned_pages, gateway, project_id)
-    job.provider_model = ", ".join(used) or None
-    doc = parse_pdf(raw, title, ocr_text=texts, allow_empty=True)
+    settings = get_settings()
+    boxes = first.image_boxes[:] if settings.embedded_images else []
+    if not first.scanned_pages and not boxes:
+        return ensure_content(first)
+    ocr = None
+    warnings: list[str] = []
+    used: list[str] = []
+    if first.scanned_pages:
+        ocr = await ocr_scanned_pages(raw, first.scanned_pages, gateway, project_id)
+        warnings += ocr.warnings
+        used += ocr.used
+    embedded: dict[int, list[EmbeddedImage]] = {}
+    if boxes:
+        try:
+            crops = render_pdf_regions(raw, boxes)
+        except Exception as exc:  # noqa: BLE001 - rendering is best effort for pictures
+            crops = []
+            warnings.append(f"Pictures were not read: rendering failed ({exc.__class__.__name__})")
+        read = await read_pictures(list(enumerate(crops)), gateway, project_id, check_size=False)
+        warnings += read.warnings
+        used += read.used
+        for index, picture in read.pictures.items():
+            picture.bbox = boxes[int(index)]
+            embedded.setdefault(picture.bbox["page"], []).append(picture)
+    job.provider_model = ", ".join(sorted(set(used))) or None
+    if ocr is None and not embedded:
+        doc = first
+    else:
+        doc = parse_pdf(
+            raw,
+            title,
+            ocr_text=ocr.texts if ocr else None,
+            ocr_layout=ocr.layouts if ocr else None,
+            embedded=embedded,
+            allow_empty=True,
+        )
     doc.warnings.extend(warnings)
     return ensure_content(doc)
+
+
+async def _parse_docx(
+    raw: bytes, title: str, gateway: ModelGateway, project_id: uuid.UUID, job: IngestionJob
+) -> ParsedDocument:
+    """DOCX text, plus the text of its pictures when models are configured (EMBEDDED_IMAGES)."""
+    from opennotebook.ingestion.images import read_pictures
+
+    if not get_settings().embedded_images:
+        return parse(raw, "docx", title)
+    try:
+        candidates = docx_pictures(raw)
+    except Exception:  # noqa: BLE001 - the text parser reports malformed files
+        return parse(raw, "docx", title)
+    if not candidates:
+        return parse(raw, "docx", title)
+    read = await read_pictures(candidates, gateway, project_id, check_size=True)
+    doc = parse(raw, "docx", title, embedded={str(k): v for k, v in read.pictures.items()})
+    doc.warnings.extend(read.warnings)
+    if read.used:
+        job.provider_model = ", ".join(read.used)
+    return doc
 
 
 # --- archives ----------------------------------------------------------------------------------------

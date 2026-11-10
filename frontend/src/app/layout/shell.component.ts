@@ -277,6 +277,7 @@ export class ShellComponent {
     { link: '/wiki', icon: 'hub', label: t('Wiki') },
     { link: '/status', icon: 'monitor_heart', label: t('RAG Status') },
     { link: '/settings', icon: 'settings', label: t('Settings') },
+    { link: '/guide', icon: 'menu_book', label: t('Guide') },
   ];
 
   /** Language names are shown in their own language. */

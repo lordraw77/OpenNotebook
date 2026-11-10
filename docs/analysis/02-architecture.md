@@ -162,7 +162,9 @@ Each step is idempotent, retryable and versioned (`pipeline_version`, `embedding
   chain transcribes. The description comes from the `vision` chain. Both are indexed under "Text in the image"
   and "Image description".
 - **Scanned PDF pages**: pages without a text layer are rendered with pypdfium2 and transcribed the same way
-  (up to `OCR_MAX_PAGES`). Their text is anchored to the page, with a whole-page box.
+  (up to `OCR_MAX_PAGES`). With a vision model the reply is a list of lines with rectangles and each paragraph is
+  anchored to its lines (`OCR_LAYOUT`); a dedicated OCR model, or a reply without usable boxes, anchors the
+  text to the page with a whole-page box.
 - **Web** (`ingestion/web.py`), fetched by the worker:
   - Requests: only http(s) and no credentials; every resolved address must be public (unless `WEB_ALLOW_PRIVATE`),
     and the connected peer address is re-checked before the body is read. Redirects are followed manually and
@@ -183,8 +185,10 @@ Each step is idempotent, retryable and versioned (`pipeline_version`, `embedding
   the rendition, `/file` the original. A converter that is down or busy makes the job retry; a document it cannot
   convert fails, except DOCX, which falls back to python-docx without page numbers. Office formats are detected
   from the container content (OOXML parts, ODF `mimetype`) and, for OLE2 legacy files, the extension.
-- Not implemented: 7z and RAR, JavaScript rendering of web pages (Playwright), images embedded inside PDF/DOCX,
-  ClamAV.
+- 7z and RAR (1.3): read in memory with libarchive through `libarchive-c` (only those two formats enabled), with the
+  same budget as ZIP/TAR. Pictures inside PDF (rendered crops of their boxes) and DOCX (package media) are read by
+  the OCR/vision models; scanned pages and images can return line boxes from a vision model (`OCR_LAYOUT`).
+- Not implemented: JavaScript rendering of web pages (Playwright), pictures inside PPTX/XLSX, ClamAV.
 
 ## 4. Retrieval and grounded chat
 

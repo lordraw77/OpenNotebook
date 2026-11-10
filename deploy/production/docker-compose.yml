@@ -25,7 +25,7 @@ x-hardening: &hardening
   cap_drop: [ALL]
 
 x-app: &app
-  image: ${REGISTRY:-lordraw}/opennotebook-api:${VERSION:-1.2.0}
+  image: ${REGISTRY:-lordraw}/opennotebook-api:${VERSION:-1.3.0}
   pull_policy: missing
   env_file:
     - path: .env
@@ -46,7 +46,7 @@ services:
   web:
     mem_limit: ${WEB_MEM_LIMIT:-256m}
     pids_limit: 256
-    image: ${REGISTRY:-lordraw}/opennotebook-web:${VERSION:-1.2.0}
+    image: ${REGISTRY:-lordraw}/opennotebook-web:${VERSION:-1.3.0}
     pull_policy: missing
     ports:
       - "${WEB_BIND:-0.0.0.0}:${WEB_PORT:-8080}:8080"
@@ -78,7 +78,7 @@ services:
     <<: *app
     mem_limit: ${WORKER_MEM_LIMIT:-4g}
     pids_limit: 1024
-    image: ${REGISTRY:-lordraw}/opennotebook-worker:${VERSION:-1.2.0}
+    image: ${REGISTRY:-lordraw}/opennotebook-worker:${VERSION:-1.3.0}
     command: ["worker"]
     networks: [internal, egress, convert]
     depends_on:
@@ -92,7 +92,7 @@ services:
   # internet, no database, no storage), reachable only by the worker.
   converter:
     profiles: [converter]
-    image: ${REGISTRY:-lordraw}/opennotebook-converter:${VERSION:-1.2.0}
+    image: ${REGISTRY:-lordraw}/opennotebook-converter:${VERSION:-1.3.0}
     environment:
       CONVERTER_CONCURRENCY: ${CONVERTER_CONCURRENCY:-2}
       CONVERTER_TIMEOUT_SECONDS: ${CONVERTER_TIMEOUT_SECONDS:-180}

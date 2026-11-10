@@ -10,7 +10,7 @@ export VERSION REGISTRY OPENNOTEBOOK_ENV_FILE
 
 COMPOSE := docker compose --env-file $(ENV_FILE) -f deploy/compose/docker-compose.yml
 
-.PHONY: help secrets build up down restart logs ps migrate bootstrap doctor run test test/backend test/frontend \
+.PHONY: docs-screenshots help secrets build up down restart logs ps migrate bootstrap doctor run test test/backend test/frontend \
         lint fmt check-no-models bundle release docker/build docker/run docker/stop clean
 
 help: ## Show this help
@@ -68,6 +68,9 @@ fmt: ## Format backend and frontend code
 check-no-models: ## Verify that images contain no model weights or ML runtimes
 	@scripts/check-no-models.sh $(REGISTRY)/opennotebook-api:$(VERSION) $(REGISTRY)/opennotebook-worker:$(VERSION) \
 	  $(REGISTRY)/opennotebook-converter:$(VERSION)
+
+docs-screenshots: ## Regenerate the in-app guide screenshots (demo backend with scripted models, no provider needed)
+	@scripts/docs/run.sh
 
 bundle: build check-no-models ## Create a release tarball (images + compose + .env.example + install.sh)
 	@scripts/bundle.sh $(VERSION) $(REGISTRY)

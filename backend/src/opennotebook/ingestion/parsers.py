@@ -7,13 +7,20 @@ Content type is detected from the bytes, never from the file extension alone.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import re
 import statistics
 import zipfile
 from dataclasses import dataclass
 
-from opennotebook.ingestion.document import DocumentBuilder, ParsedDocument
+from opennotebook.ingestion.document import (
+    DocumentBuilder,
+    EmbeddedImage,
+    OcrLine,
+    ParsedDocument,
+    group_ocr_lines,
+)
 
 
 class UnsupportedContent(ValueError):
@@ -26,7 +33,8 @@ class ParseError(ValueError):
 
 @dataclass(frozen=True)
 class Sniffed:
-    format: str  # pdf | docx | xlsx | pptx | office | markdown | text | html | code | image | zip | tar
+    # pdf | docx | xlsx | pptx | office | markdown | text | html | code | image | zip | tar | 7z | rar
+    format: str
     mime_type: str
     kind: str = "file"  # SourceKind value
     language: str | None = None
@@ -147,9 +155,9 @@ def sniff(data: bytes, filename: str) -> Sniffed:
     if data.startswith(b"{\\rtf") and converter_enabled():
         return Sniffed("office", "application/rtf", extension="rtf")
     if data.startswith(b"7z\xbc\xaf\x27\x1c"):
-        raise UnsupportedContent("7z archives are not supported; use ZIP or TAR (.tar, .tar.gz, .tar.xz)")
-    if data.startswith(b"Rar!"):
-        raise UnsupportedContent("RAR archives are not supported; use ZIP or TAR")
+        return Sniffed("7z", "application/x-7z-compressed", kind="archive")
+    if data.startswith((b"Rar!\x1a\x07\x00", b"Rar!\x1a\x07\x01\x00")):
+        return Sniffed("rar", "application/vnd.rar", kind="archive")
     if _is_tar(data[:512]):
         return Sniffed("tar", "application/x-tar", kind="archive")
     for magic, codec, mime in _COMPRESSED:
@@ -188,7 +196,9 @@ def decode_text(data: bytes) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def parse(data: bytes, fmt: str, title: str) -> ParsedDocument:
+def parse(
+    data: bytes, fmt: str, title: str, embedded: dict[str, EmbeddedImage] | None = None
+) -> ParsedDocument:
     try:
         match fmt:
             case "pdf":
@@ -199,7 +209,7 @@ def parse(data: bytes, fmt: str, title: str) -> ParsedDocument:
 
                 return parse_code(decode_text(data), detect_language(title, data[:200]), title)
             case "docx":
-                return parse_docx(data, title)
+                return parse_docx(data, title, embedded)
             case "xlsx":
                 return parse_xlsx(data, title)
             case "pptx":
@@ -309,7 +319,36 @@ def parse_text(text: str, title: str) -> ParsedDocument:
 _HEADING_STYLE = re.compile(r"^(?:heading|titolo|überschrift|titre)\s*(\d)$", re.I)
 
 
-def parse_docx(data: bytes, title: str) -> ParsedDocument:
+def _item_pictures(document, item) -> list[tuple[str, bytes]]:  # type: ignore[no-untyped-def]
+    """(sha1, bytes) of the pictures embedded in a paragraph or table, in document order."""
+    out = []
+    for rid in item._element.xpath(".//a:blip/@r:embed"):
+        try:
+            blob = document.part.related_parts[rid].blob
+        except KeyError:  # linked (external) picture: nothing inside the package
+            continue
+        out.append((hashlib.sha1(blob).hexdigest(), blob))  # noqa: S324 - identifier, not security
+    return out
+
+
+def docx_pictures(data: bytes) -> list[tuple[str, bytes]]:
+    """Distinct pictures of a DOCX in document order (one used several times, e.g. a logo, appears once)."""
+    import docx
+
+    document = docx.Document(io.BytesIO(data))
+    seen: set[str] = set()
+    out = []
+    for item in document.iter_inner_content():
+        for key, blob in _item_pictures(document, item):
+            if key not in seen:
+                seen.add(key)
+                out.append((key, blob))
+    return out
+
+
+def parse_docx(data: bytes, title: str, embedded: dict[str, EmbeddedImage] | None = None) -> ParsedDocument:
+    """`embedded` maps the SHA-1 of a picture (see `docx_pictures`) to what the models read in it; it becomes
+    text blocks right after the paragraph that contains the picture."""
     import docx
     from docx.table import Table
     from docx.text.paragraph import Paragraph
@@ -317,13 +356,14 @@ def parse_docx(data: bytes, title: str) -> ParsedDocument:
     document = docx.Document(io.BytesIO(data))
     b = DocumentBuilder(document.core_properties.title or title)
     list_buffer: list[str] = []
+    placed: set[str] = set()
 
     def flush_list() -> None:
         if list_buffer:
             b.block("\n".join(list_buffer), "list")
             list_buffer.clear()
 
-    for item in document.iter_inner_content():
+    def handle(item) -> None:  # type: ignore[no-untyped-def]
         if isinstance(item, Table):
             flush_list()
             rows = []
@@ -331,13 +371,13 @@ def parse_docx(data: bytes, title: str) -> ParsedDocument:
                 cells = [c.text.strip().replace("\n", " ") for c in row.cells]
                 rows.append(" | ".join(cells))
             b.block("\n".join(rows), "table")
-            continue
+            return
         if not isinstance(item, Paragraph):
-            continue
+            return
         text = item.text.strip()
         if not text:
             flush_list()
-            continue
+            return
         style = (item.style.name if item.style is not None else "") or ""
         m = _HEADING_STYLE.match(style)
         if style.lower() == "title":
@@ -351,6 +391,15 @@ def parse_docx(data: bytes, title: str) -> ParsedDocument:
         else:
             flush_list()
             b.block(text, "paragraph")
+
+    for item in document.iter_inner_content():
+        handle(item)
+        if embedded:
+            for key, _ in _item_pictures(document, item):
+                if key in embedded and key not in placed:
+                    placed.add(key)
+                    flush_list()
+                    _picture_blocks(b, embedded[key])
     flush_list()
     return ensure_content(b.build())
 
@@ -516,12 +565,54 @@ def _inside(word: dict, box: tuple[float, float, float, float]) -> bool:
     return x0 <= cx <= x1 and top <= cy <= bottom
 
 
+def _picture_blocks(
+    b: DocumentBuilder, picture: EmbeddedImage, page: int | None = None, bboxes: list[dict] | None = None
+) -> None:
+    """A picture read by models becomes up to two blocks (what it shows, the text in it) at its position."""
+    extra: dict = {}
+    if page is not None:
+        extra = {"page": page, "bboxes": bboxes or []}
+    if picture.description.strip():
+        b.block(f"[Image] {picture.description.strip()}", "image_description", **extra)
+    if picture.ocr.strip():
+        b.block(f"[Text in image] {picture.ocr.strip()}", "ocr", **extra)
+
+
+def _page_pictures(page, tables: list, scanned: bool, min_px: int) -> list[dict]:  # type: ignore[no-untyped-def]
+    """Pictures of a text page worth reading: big enough, not a page-sized background, not repeated art."""
+    if scanned:
+        return []
+    width, height = float(page.width), float(page.height)
+    boxes = []
+    for image in page.images:
+        x0, top = max(0.0, float(image["x0"])), max(0.0, float(image["top"]))
+        x1, bottom = min(width, float(image["x1"])), min(height, float(image["bottom"]))
+        if x1 - x0 < min_px or bottom - top < min_px:
+            continue
+        if (x1 - x0) * (bottom - top) >= 0.9 * width * height:
+            continue
+        boxes.append({"page": page.page_number, "x0": x0, "top": top, "x1": x1, "bottom": bottom})
+    return boxes
+
+
 def parse_pdf(
-    data: bytes, title: str, ocr_text: dict[int, str] | None = None, allow_empty: bool = False
+    data: bytes,
+    title: str,
+    ocr_text: dict[int, str] | None = None,
+    allow_empty: bool = False,
+    ocr_layout: dict[int, list[OcrLine]] | None = None,
+    embedded: dict[int, list[EmbeddedImage]] | None = None,
 ) -> ParsedDocument:
-    """`ocr_text` maps page numbers of scanned pages to their OCR transcription (Markdown);
-    `allow_empty` returns a document without blocks instead of failing (first pass before OCR)."""
+    """`ocr_text` maps page numbers of scanned pages to their OCR transcription (Markdown); `ocr_layout` maps
+    them
+    to OCR lines with their boxes (preferred: citations highlight the lines, not the whole page); `embedded`
+    maps pages to the pictures read by models (each with its box in page points); `allow_empty` returns a
+    document without blocks instead of failing (first pass before OCR)."""
     import pdfplumber
+
+    from opennotebook.config import get_settings
+
+    min_px = get_settings().embedded_image_min_px
 
     with pdfplumber.open(io.BytesIO(data)) as pdf:
         meta_title = (pdf.metadata or {}).get("Title")
@@ -553,7 +644,22 @@ def parse_pdf(
                 if page.images:
                     doc.scanned_pages.append(pno)
                     ocr = (ocr_text or {}).get(pno, "").strip()
-                    if ocr:
+                    lines = (ocr_layout or {}).get(pno)
+                    if lines:
+                        w, h = float(page.width), float(page.height)
+                        for group in group_ocr_lines(lines):
+                            boxes = [
+                                {
+                                    "page": pno,
+                                    "x0": ln.x0 * w,
+                                    "top": ln.y0 * h,
+                                    "x1": ln.x1 * w,
+                                    "bottom": ln.y1 * h,
+                                }
+                                for ln in group
+                            ]
+                            b.block(" ".join(ln.text.strip() for ln in group), "ocr", page=pno, bboxes=boxes)
+                    elif ocr:
                         full = {
                             "page": pno,
                             "x0": 0,
@@ -567,6 +673,7 @@ def parse_pdf(
                         empty_pages.append(pno)
                 continue
 
+            doc.image_boxes.extend(_page_pictures(page, tables, False, min_px))
             lines = _lines_from_words(words)
             # Group lines into paragraphs: break on large vertical gaps or font size changes.
             groups: list[list[_Line]] = []
@@ -581,7 +688,12 @@ def parse_pdf(
 
             items: list[tuple[float, str, object]] = [(g[0].top, "text", g) for g in groups]
             items += [(t.bbox[1], "table", t) for t in tables]
+            items += [(p.bbox["top"], "picture", p) for p in (embedded or {}).get(pno, [])]
             for _, kind, obj in sorted(items, key=lambda i: i[0]):
+                if kind == "picture":
+                    box = obj.bbox  # type: ignore[attr-defined]
+                    _picture_blocks(b, obj, pno, [box])  # type: ignore[arg-type]
+                    continue
                 if kind == "table":
                     rows = obj.extract() or []  # type: ignore[attr-defined]
                     text = "\n".join(" | ".join((c or "").replace("\n", " ") for c in row) for row in rows)

@@ -201,9 +201,9 @@ async def test_upload_ingest_chunks_and_file(client, admin_headers, session, wor
         client,
         admin_headers,
         world.driver["id"],
-        [("copy.md", RADIO_MD), ("pack.7z", b"7z\xbc\xaf\x27\x1c" + bytes(26))],
+        [("copy.md", RADIO_MD), ("pack.bin", b"\x00\x01\x02" * 10)],
     )
-    assert again[0]["duplicate"] is True and again[1]["error"].startswith("7z archives")
+    assert again[0]["duplicate"] is True and again[1]["error"].startswith("Binary")
     assert jobs == []
 
 

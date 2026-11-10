@@ -165,6 +165,7 @@ docs/        analysis (requirements, architecture, data model, threat model, roa
 
 ## Documentation
 
+- User guide: in the application, top bar → **Guide** (English and Italian, with screenshots; `make docs-screenshots` regenerates them)
 - [Project analysis](docs/analysis/README.md): requirements, architecture and ADRs, data model, threat model, roadmap
 - [Deployment guide](docs/deploy.md): production deployment from Docker Hub
 - [Docker overview](docs/docker.md): images, services, profiles, volumes, operations

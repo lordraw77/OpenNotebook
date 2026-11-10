@@ -29,8 +29,8 @@ def test_sniff_detects_by_content_not_extension():
     assert sniff(b"int main(void) { return 0; }\n", "src/main.c").language == "c"
     assert sniff(b"#!/usr/bin/env python3\nprint(1)\n", "tool").language == "python"
     assert sniff(b"<!DOCTYPE html><html><body>x</body></html>", "page").format == "html"
-    with pytest.raises(UnsupportedContent, match="7z"):
-        sniff(b"7z\xbc\xaf\x27\x1c" + b"\x00" * 20, "a.7z")
+    assert sniff(b"7z\xbc\xaf\x27\x1c" + b"\x00" * 20, "a.7z").kind == "archive"
+    assert sniff(b"Rar!\x1a\x07\x00" + b"\x00" * 20, "a.rar").format == "rar"
     with pytest.raises(UnsupportedContent, match="Binary"):
         sniff(b"\x00\x01\x02" * 10, "blob")
     buf = io.BytesIO()
